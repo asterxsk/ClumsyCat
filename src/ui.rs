@@ -1,4 +1,4 @@
-use crate::app::{ActivePanel, App, Dialog, LeftSection, Page};
+use crate::app::{ActivePanel, App, Dialog, LeftSection};
 use crate::search::SearchMode;
 use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -532,10 +532,6 @@ fn render_settings_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &The
     frame.render_widget(&block, dialog_area);
 
     let inner = block.inner(dialog_area);
-
-    // Available options
-    let accent_colors = ["orange", "blue", "green", "red", "yellow", "magenta", "cyan"];
-    let nav_modes = ["arrow", "vim"];
 
     let accent_style = if app.settings_selection == 0 {
         Style::default()

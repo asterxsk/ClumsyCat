@@ -1,7 +1,7 @@
 use crate::config::{Config, Settings};
 use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
-use crate::tools::{self, find_tool_by_display_name, LaunchResult, PROVIDERS, STUB_MODELS, TOOLS};
+use crate::tools::{PROVIDERS, TOOLS};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -411,7 +411,7 @@ impl App {
     }
 
     /// Map vim keys (k/j/h/l) to navigation keys when in vim mode
-    fn map_vim_key(&self, code: KeyCode) -> KeyCode {
+    fn map_vim_key(&self, code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyCode {
         use ratatui::crossterm::event::KeyCode;
         if self.settings.nav_mode == "vim" {
             match code {
