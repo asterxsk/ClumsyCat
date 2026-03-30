@@ -1,13 +1,11 @@
-use crate::app::{ActivePanel, App, Dialog, LeftSection};
+use crate::app::{ActivePanel, App, Dialog, LeftSection, Page};
 use crate::search::SearchMode;
 use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{block::BorderType, Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
-
-const ASCII_ART: &str = "CLUMSY CAT";
 
 const SETTINGS_ASCII: &str = r#"
   ____       _   _   _
@@ -22,28 +20,30 @@ pub fn render(app: &App, frame: &mut Frame) {
     let theme = Theme::with_accent(&app.settings.accent_color);
     let area = frame.area();
 
+    // Main layout: left/right split with bottom bar (no top bar - ASCII moves to left column)
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(6),
-            Constraint::Min(0),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
         .split(area);
 
-    render_top_bar(frame, main_chunks[0], &theme);
-
-    let middle_chunks = Layout::default()
+    let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(75),
-        ])
-        .split(main_chunks[1]);
+        .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
+        .split(main_chunks[0]);
 
-    render_left_panel(frame, middle_chunks[0], app, &theme);
-    render_right_panel(frame, middle_chunks[1], app, &theme);
-    render_bottom_bar(frame, main_chunks[2], app, &theme);
+    // Render left column (ASCII art + Navigation)
+    render_left_column(frame, content_chunks[0], app, &theme);
+
+    // Render right panel based on current page
+    match app.page {
+        Page::Browser => render_browser_panel(frame, content_chunks[1], app, &theme),
+        Page::ToolSelection => render_tool_selection_panel(frame, content_chunks[1], app, &theme),
+        Page::Provider => render_provider_selection_panel(frame, content_chunks[1], app, &theme),
+        Page::Model => render_model_selection_panel(frame, content_chunks[1], app, &theme),
+    }
+
+    // Render bottom bar
+    render_bottom_bar(frame, main_chunks[1], app, &theme);
 
     // Render settings overlay if open
     if app.settings_open {
@@ -68,119 +68,367 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 }
 
-fn render_top_bar(frame: &mut Frame, area: Rect, theme: &Theme) {
+/// Render the left column containing ASCII art box and navigation box
+fn render_left_column(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    // Calculate ASCII art height (lines + border)
+    let ascii_lines = app.ascii_art.lines().count() as u16;
+    let ascii_height = ascii_lines + 2; // +2 for borders
+
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(ascii_height), Constraint::Min(0)])
+        .split(area);
+
+    // Render ASCII art box at top
+    render_ascii_box(frame, left_chunks[0], app, theme);
+
+    // Render navigation box below based on current page
+    match app.page {
+        Page::Browser => render_browser_navigation(frame, left_chunks[1], app, theme),
+        Page::ToolSelection => render_tool_navigation(frame, left_chunks[1], app, theme),
+        Page::Provider => render_provider_navigation(frame, left_chunks[1], app, theme),
+        Page::Model => render_model_navigation(frame, left_chunks[1], app, theme),
+    }
+}
+
+/// Render the ASCII art box
+fn render_ascii_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let accent_color = Theme::from_name(&app.settings.accent_color);
+
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border_normal));
-    
+
     let inner = block.inner(area);
-    frame.render_widget(&block, area);
-    
-    let text = Paragraph::new(ASCII_ART)
-        .style(Style::default().fg(theme.text_normal))
-        .centered();
+    frame.render_widget(block, area);
+
+    let text = Paragraph::new(app.ascii_art.as_str())
+        .style(Style::default().fg(accent_color))
+        .alignment(Alignment::Center);
     frame.render_widget(text, inner);
 }
 
-fn render_left_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+/// Render browser page navigation (favorites/recents for directories)
+fn render_browser_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let border_color = if app.active_panel == ActivePanel::Left {
         theme.border_focused
     } else {
         theme.border_normal
     };
-    
+
     let block = Block::default()
         .title(" Navigation ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
-    
+
     let inner = block.inner(area);
     frame.render_widget(&block, area);
-    
+
     let mut items: Vec<ListItem> = Vec::new();
-    
+
     let fav_color = if app.left_section == LeftSection::Favorites {
         theme.highlight
     } else {
         theme.text_normal
     };
-    items.push(ListItem::new(
-        Line::from(vec![
-            Span::raw("★ "),
-            Span::raw("Favorites").style(Style::default().fg(fav_color)),
-        ])
-    ));
-    
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("* "),
+        Span::raw("Favorites").style(Style::default().fg(fav_color)),
+    ])));
+
     if app.favorites_dirs.is_empty() {
-        items.push(ListItem::new(
-            Line::from(vec![
-                Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
-            ])
-        ));
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
     } else {
         for fav in &app.favorites_dirs {
-            let name = fav.file_name()
+            let name = fav
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| fav.to_string_lossy().to_string());
-            let color = if app.left_section == LeftSection::Favorites && app.selected_index < app.favorites_dirs.len() && &app.favorites_dirs[app.selected_index] == fav {
+            let color = if app.left_section == LeftSection::Favorites
+                && app.selected_index < app.favorites_dirs.len()
+                && &app.favorites_dirs[app.selected_index] == fav
+            {
                 theme.highlight
             } else {
                 theme.text_dim
             };
-            items.push(ListItem::new(
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::raw(name).style(color),
-                ])
-            ));
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(name).style(color),
+            ])));
         }
     }
-    
+
     let sep_width = (inner.width as usize).saturating_sub(2);
-    items.push(ListItem::new(Line::from("─".repeat(sep_width))));
-    
+    items.push(ListItem::new(Line::from("-".repeat(sep_width))));
+
     let rec_color = if app.left_section == LeftSection::Recents {
         theme.highlight
     } else {
         theme.text_normal
     };
-    items.push(ListItem::new(
-        Line::from(vec![
-            Span::raw("◷ "),
-            Span::raw("Recents").style(Style::default().fg(rec_color)),
-        ])
-    ));
-    
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("~ "),
+        Span::raw("Recents").style(Style::default().fg(rec_color)),
+    ])));
+
     if app.recents_dirs.is_empty() {
-        items.push(ListItem::new(
-            Line::from(vec![
-                Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
-            ])
-        ));
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
     } else {
         for recent in &app.recents_dirs {
-            let name = recent.file_name()
+            let name = recent
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| recent.to_string_lossy().to_string());
-            let color = if app.left_section == LeftSection::Recents && app.selected_index < app.recents_dirs.len() && &app.recents_dirs[app.selected_index] == recent {
+            let color = if app.left_section == LeftSection::Recents
+                && app.selected_index < app.recents_dirs.len()
+                && &app.recents_dirs[app.selected_index] == recent
+            {
                 theme.highlight
             } else {
                 theme.text_dim
             };
-            items.push(ListItem::new(
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::raw(name).style(color),
-                ])
-            ));
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(name).style(color),
+            ])));
         }
     }
-    
+
     let list = List::new(items);
     frame.render_widget(list, inner);
 }
 
-fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+/// Render tool selection page navigation
+fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Left {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Navigation ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+
+    let fav_color = if app.tool_left_section == LeftSection::Favorites {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("* "),
+        Span::raw("Favorites").style(Style::default().fg(fav_color)),
+    ])));
+
+    if app.favorites_tools.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for tool in &app.favorites_tools {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(tool).style(color),
+            ])));
+        }
+    }
+
+    let sep_width = (inner.width as usize).saturating_sub(2);
+    items.push(ListItem::new(Line::from("-".repeat(sep_width))));
+
+    let rec_color = if app.tool_left_section == LeftSection::Recents {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("~ "),
+        Span::raw("Recents").style(Style::default().fg(rec_color)),
+    ])));
+
+    if app.recents_tools.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for tool in &app.recents_tools {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(tool).style(color),
+            ])));
+        }
+    }
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render provider selection page navigation
+fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Left {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Navigation ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+
+    let fav_color = if app.provider_left_section == LeftSection::Favorites {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("* "),
+        Span::raw("Favorites").style(Style::default().fg(fav_color)),
+    ])));
+
+    if app.favorites_providers.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for provider in &app.favorites_providers {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(provider).style(color),
+            ])));
+        }
+    }
+
+    let sep_width = (inner.width as usize).saturating_sub(2);
+    items.push(ListItem::new(Line::from("-".repeat(sep_width))));
+
+    let rec_color = if app.provider_left_section == LeftSection::Recents {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("~ "),
+        Span::raw("Recents").style(Style::default().fg(rec_color)),
+    ])));
+
+    if app.recents_providers.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for provider in &app.recents_providers {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(provider).style(color),
+            ])));
+        }
+    }
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render model selection page navigation
+fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Left {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Navigation ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+
+    let fav_color = if app.model_left_section == LeftSection::Favorites {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("* "),
+        Span::raw("Favorites").style(Style::default().fg(fav_color)),
+    ])));
+
+    if app.favorites_models.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for model in &app.favorites_models {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(model).style(color),
+            ])));
+        }
+    }
+
+    let sep_width = (inner.width as usize).saturating_sub(2);
+    items.push(ListItem::new(Line::from("-".repeat(sep_width))));
+
+    let rec_color = if app.model_left_section == LeftSection::Recents {
+        theme.highlight
+    } else {
+        theme.text_normal
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::raw("~ "),
+        Span::raw("Recents").style(Style::default().fg(rec_color)),
+    ])));
+
+    if app.recents_models.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+        ])));
+    } else {
+        for model in &app.recents_models {
+            let color = theme.text_dim;
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(model).style(color),
+            ])));
+        }
+    }
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render the browser panel (file list)
+fn render_browser_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let border_color = if app.active_panel == ActivePanel::Right {
         theme.border_focused
     } else {
@@ -192,6 +440,7 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .title(" Browser ")
         .title_bottom(Span::raw(title_bottom))
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
@@ -241,7 +490,7 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if let Some(ref err) = app.error {
         let error_msg = Paragraph::new(format!("Error: {}", err))
             .style(Style::default().fg(ratatui::style::Color::Red))
-            .centered();
+            .alignment(Alignment::Center);
         frame.render_widget(error_msg, content_area);
         return;
     }
@@ -249,7 +498,7 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if app.entries.is_empty() {
         let empty_msg = Paragraph::new("Empty directory")
             .style(theme.text_dim)
-            .centered();
+            .alignment(Alignment::Center);
         frame.render_widget(empty_msg, content_area);
         return;
     }
@@ -268,7 +517,7 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .iter()
         .map(|&i| {
             let entry = &app.entries[i];
-            let icon = if entry.is_dir { "▸" } else { "·" };
+            let icon = if entry.is_dir { ">" } else { "." };
             let is_selected = i == app.selected_index && app.active_panel == ActivePanel::Right;
             let color = if is_selected {
                 theme.highlight
@@ -290,29 +539,239 @@ fn render_right_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     frame.render_widget(list, content_area);
 }
 
+/// Render the tool selection panel
+fn render_tool_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Right {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Select Tool ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    if app.tools.is_empty() {
+        let empty_msg = Paragraph::new("No tools available")
+            .style(theme.text_dim)
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .tools
+        .iter()
+        .enumerate()
+        .map(|(i, tool)| {
+            let is_selected =
+                i == app.selected_tool_index && app.active_panel == ActivePanel::Right;
+            let color = if is_selected {
+                theme.highlight
+            } else {
+                theme.text_normal
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::raw("> "),
+                Span::raw(tool).style(Style::default().fg(color)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render the provider selection panel
+fn render_provider_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Right {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Select Provider ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    if app.providers.is_empty() {
+        let empty_msg = Paragraph::new("No providers available")
+            .style(theme.text_dim)
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .providers
+        .iter()
+        .enumerate()
+        .map(|(i, provider)| {
+            let is_selected =
+                i == app.selected_provider_index && app.active_panel == ActivePanel::Right;
+            let color = if is_selected {
+                theme.highlight
+            } else {
+                theme.text_normal
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::raw("> "),
+                Span::raw(provider).style(Style::default().fg(color)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render the model selection panel with loading state
+fn render_model_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let border_color = if app.active_panel == ActivePanel::Right {
+        theme.border_focused
+    } else {
+        theme.border_normal
+    };
+
+    let block = Block::default()
+        .title(" Select Model ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
+
+    // Handle loading state
+    if app.models_loading {
+        let loading_msg = Paragraph::new("Loading models...")
+            .style(Style::default().fg(theme.text_dim))
+            .alignment(Alignment::Center);
+        frame.render_widget(loading_msg, inner);
+        return;
+    }
+
+    // Handle error state
+    if let Some(ref err) = app.models_error {
+        let error_msg = Paragraph::new(format!("Error: {}", err))
+            .style(Style::default().fg(ratatui::style::Color::Red))
+            .alignment(Alignment::Center);
+        frame.render_widget(error_msg, inner);
+        return;
+    }
+
+    if app.models.is_empty() {
+        let empty_msg = Paragraph::new("No models available")
+            .style(theme.text_dim)
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .models
+        .iter()
+        .enumerate()
+        .map(|(i, model)| {
+            let is_selected =
+                i == app.selected_model_index && app.active_panel == ActivePanel::Right;
+            let color = if is_selected {
+                theme.highlight
+            } else {
+                theme.text_normal
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::raw("> "),
+                Span::raw(model).style(Style::default().fg(color)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items);
+    frame.render_widget(list, inner);
+}
+
+/// Render the bottom bar with context-sensitive keybinds
 fn render_bottom_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border_normal));
 
     let inner = block.inner(area);
     frame.render_widget(&block, area);
 
-    let keybinds = if app.quit_confirm >= 1 {
-        " [Ctrl+D×2] Confirm quit "
-    } else if app.search_mode.is_active() {
-        " [Type] Search   [W/S] Navigate matches   [Enter] Confirm   [Esc] Cancel   [Backspace] Delete char "
-    } else if app.settings_open {
-        " [W/S] Navigate   [D/Enter] Change   [Esc] Save & Close "
-    } else {
-        " [/] Search   [Space] Select   [Ctrl+F] Favorite   [Ctrl+S] Settings   [D] Open   [A] Back   [W/S] Up/Down   [Ctrl+D×2] Quit "
-    };
+    let keybinds = get_context_keybinds(app);
 
     let text = Paragraph::new(keybinds)
         .style(Style::default().fg(theme.text_dim))
-        .centered();
+        .alignment(Alignment::Center);
 
     frame.render_widget(text, inner);
+}
+
+/// Get context-sensitive keybind text based on current state (all lowercase, separated by bullet)
+fn get_context_keybinds(app: &App) -> String {
+    // Handle quit confirmation first
+    if app.quit_confirm >= 1 {
+        return "ctrl+d x2 confirm quit".to_string();
+    }
+
+    // Handle dialog state
+    if app.dialog != Dialog::None {
+        return match &app.dialog {
+            Dialog::None => String::new(),
+            Dialog::AddToFavorites { .. } => {
+                "w/s navigate  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string()
+            }
+            Dialog::SudoPassword { .. } => "enter submit  \u{25CF}  esc cancel".to_string(),
+            Dialog::ToolNotInstalled { .. } => "enter dismiss".to_string(),
+            Dialog::Error { .. } => "enter dismiss".to_string(),
+        };
+    }
+
+    // Handle settings overlay
+    if app.settings_open {
+        return "w/s navigate  \u{25CF}  d/enter change  \u{25CF}  esc save & close".to_string();
+    }
+
+    // Handle search mode
+    if app.search_mode.is_active() {
+        return "type to search  \u{25CF}  w/s prev/next  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string();
+    }
+
+    // Page-specific keybinds (all lowercase, separated by bullet)
+    match app.page {
+        Page::Browser => {
+            "/ search  \u{25CF}  space select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+d x2 quit".to_string()
+        }
+        Page::ToolSelection => {
+            "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+        }
+        Page::Provider => {
+            "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+        }
+        Page::Model => {
+            if app.models_loading {
+                "loading...  \u{25CF}  a back  \u{25CF}  ctrl+d x2 quit".to_string()
+            } else {
+                "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+            }
+        }
+    }
 }
 
 /// Helper to create a centered dialog area
@@ -345,6 +804,7 @@ fn render_add_favorite_dialog(
     let block = Block::default()
         .title(" Add to Favorites ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.highlight));
 
     frame.render_widget(Clear, dialog_area);
@@ -410,6 +870,7 @@ fn render_sudo_password_dialog(frame: &mut Frame, area: Rect, password: &str, th
     let block = Block::default()
         .title(" Authentication Required ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.highlight));
 
     frame.render_widget(Clear, dialog_area);
@@ -456,6 +917,7 @@ fn render_tool_not_installed_dialog(
     let block = Block::default()
         .title(" Tool Not Installed ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(ratatui::style::Color::Red));
 
     frame.render_widget(Clear, dialog_area);
@@ -494,6 +956,7 @@ fn render_error_dialog(frame: &mut Frame, area: Rect, message: &str, theme: &The
     let block = Block::default()
         .title(" Error ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(ratatui::style::Color::Red));
 
     frame.render_widget(Clear, dialog_area);
@@ -526,6 +989,7 @@ fn render_settings_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &The
     let block = Block::default()
         .title(" Settings ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.highlight));
 
     frame.render_widget(Clear, dialog_area);

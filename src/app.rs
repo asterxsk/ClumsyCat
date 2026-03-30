@@ -1,7 +1,7 @@
 use crate::config::{Config, Settings};
 use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
-use crate::tools::{PROVIDERS, TOOLS};
+use crate::tools::{self, find_tool_by_display_name, LaunchResult, PROVIDERS, STUB_MODELS, TOOLS};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -623,94 +623,289 @@ impl App {
     }
 
     fn handle_up(&mut self) {
-        // Only handle browser page navigation for now
-        if self.page != Page::Browser {
-            return;
-        }
-
-        if self.active_panel == ActivePanel::Left {
-            self.left_section = match self.left_section {
-                LeftSection::Favorites => LeftSection::Recents,
-                LeftSection::Recents => LeftSection::Favorites,
-            };
-        } else if self.selected_index > 0 {
-            self.selected_index -= 1;
+        match self.page {
+            Page::Browser => {
+                if self.active_panel == ActivePanel::Left {
+                    self.left_section = match self.left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else if self.selected_index > 0 {
+                    self.selected_index -= 1;
+                }
+            }
+            Page::ToolSelection => {
+                if self.active_panel == ActivePanel::Left {
+                    self.tool_left_section = match self.tool_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else if self.selected_tool_index > 0 {
+                    self.selected_tool_index -= 1;
+                }
+            }
+            Page::Provider => {
+                if self.active_panel == ActivePanel::Left {
+                    self.provider_left_section = match self.provider_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else if self.selected_provider_index > 0 {
+                    self.selected_provider_index -= 1;
+                }
+            }
+            Page::Model => {
+                if self.active_panel == ActivePanel::Left {
+                    self.model_left_section = match self.model_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else if self.selected_model_index > 0 {
+                    self.selected_model_index -= 1;
+                }
+            }
         }
     }
 
     fn handle_down(&mut self) {
-        // Only handle browser page navigation for now
-        if self.page != Page::Browser {
-            return;
-        }
-
-        if self.active_panel == ActivePanel::Left {
-            self.left_section = match self.left_section {
-                LeftSection::Favorites => LeftSection::Recents,
-                LeftSection::Recents => LeftSection::Favorites,
-            };
-        } else {
-            let max = self.entries.len();
-            if self.selected_index + 1 < max {
-                self.selected_index += 1;
+        match self.page {
+            Page::Browser => {
+                if self.active_panel == ActivePanel::Left {
+                    self.left_section = match self.left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else {
+                    let max = self.entries.len();
+                    if self.selected_index + 1 < max {
+                        self.selected_index += 1;
+                    }
+                }
+            }
+            Page::ToolSelection => {
+                if self.active_panel == ActivePanel::Left {
+                    self.tool_left_section = match self.tool_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else {
+                    let max = self.tools.len();
+                    if self.selected_tool_index + 1 < max {
+                        self.selected_tool_index += 1;
+                    }
+                }
+            }
+            Page::Provider => {
+                if self.active_panel == ActivePanel::Left {
+                    self.provider_left_section = match self.provider_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else {
+                    let max = self.providers.len();
+                    if self.selected_provider_index + 1 < max {
+                        self.selected_provider_index += 1;
+                    }
+                }
+            }
+            Page::Model => {
+                if self.active_panel == ActivePanel::Left {
+                    self.model_left_section = match self.model_left_section {
+                        LeftSection::Favorites => LeftSection::Recents,
+                        LeftSection::Recents => LeftSection::Favorites,
+                    };
+                } else {
+                    let max = self.models.len();
+                    if self.selected_model_index + 1 < max {
+                        self.selected_model_index += 1;
+                    }
+                }
             }
         }
     }
 
     fn handle_open(&mut self) {
-        // Only handle browser page navigation for now
-        if self.page != Page::Browser {
-            return;
-        }
-
-        if self.active_panel == ActivePanel::Right && self.selected_index < self.entries.len() {
-            let entry = &self.entries[self.selected_index];
-            if entry.is_dir {
-                let path = entry.path.clone();
-                self.navigate_to_dir(&path);
+        match self.page {
+            Page::Browser => {
+                if self.active_panel == ActivePanel::Right && self.selected_index < self.entries.len() {
+                    let entry = &self.entries[self.selected_index];
+                    if entry.is_dir {
+                        let path = entry.path.clone();
+                        self.navigate_to_dir(&path);
+                    }
+                }
+            }
+            Page::ToolSelection | Page::Provider | Page::Model => {
+                self.handle_enter();
             }
         }
     }
 
     fn handle_back(&mut self) {
-        // Only handle browser page navigation for now
-        if self.page != Page::Browser {
-            return;
-        }
-
-        if self.active_panel == ActivePanel::Right {
-            if let Some(parent) = self.current_dir.parent() {
-                let parent = parent.to_path_buf();
-                self.navigate_to_dir(&parent);
+        match self.page {
+            Page::Browser => {
+                if self.active_panel == ActivePanel::Right {
+                    if let Some(parent) = self.current_dir.parent() {
+                        let parent = parent.to_path_buf();
+                        self.navigate_to_dir(&parent);
+                    }
+                } else {
+                    self.active_panel = ActivePanel::Right;
+                }
             }
-        } else {
-            self.active_panel = ActivePanel::Right;
+            Page::ToolSelection | Page::Provider | Page::Model => {
+                if self.active_panel == ActivePanel::Left {
+                    self.active_panel = ActivePanel::Right;
+                } else {
+                    self.go_back();
+                }
+            }
         }
     }
 
     fn handle_select(&mut self) {
-        // Only handle browser page navigation for now
-        if self.page != Page::Browser {
-            return;
-        }
-
-        if self.active_panel == ActivePanel::Left {
-            match self.left_section {
-                LeftSection::Favorites => {
-                    if self.selected_index < self.favorites_dirs.len() {
-                        let path = self.favorites_dirs[self.selected_index].clone();
-                        self.navigate_to_dir(&path);
+        match self.page {
+            Page::Browser => {
+                if self.active_panel == ActivePanel::Left {
+                    match self.left_section {
+                        LeftSection::Favorites => {
+                            if self.selected_index < self.favorites_dirs.len() {
+                                let path = self.favorites_dirs[self.selected_index].clone();
+                                self.navigate_to_dir(&path);
+                            }
+                        }
+                        LeftSection::Recents => {
+                            if self.selected_index < self.recents_dirs.len() {
+                                let path = self.recents_dirs[self.selected_index].clone();
+                                self.navigate_to_dir(&path);
+                            }
+                        }
                     }
+                } else {
+                    self.selected_dir = Some(self.current_dir.clone());
+                    self.advance_page();
                 }
-                LeftSection::Recents => {
-                    if self.selected_index < self.recents_dirs.len() {
-                        let path = self.recents_dirs[self.selected_index].clone();
-                        self.navigate_to_dir(&path);
+            }
+            Page::ToolSelection | Page::Provider | Page::Model => {
+                self.handle_enter();
+            }
+        }
+    }
+
+    fn handle_enter(&mut self) {
+        match self.page {
+            Page::Browser => {
+                self.selected_dir = Some(self.current_dir.clone());
+                self.advance_page();
+            }
+            Page::ToolSelection => {
+                if self.selected_tool_index < self.tools.len() {
+                    let tool_name = self.tools[self.selected_tool_index].clone();
+                    if let Some(tool_info) = find_tool_by_display_name(&tool_name) {
+                        if !tools::check_tool_installed(tool_info) {
+                            self.dialog = Dialog::ToolNotInstalled {
+                                tool_name: tool_name.clone(),
+                            };
+                            return;
+                        }
+                        self.add_to_recents_tools(&tool_name);
+                        self.selected_tool = Some(tool_name.clone());
+                        if tool_info.needs_provider_selection {
+                            self.advance_page();
+                        } else {
+                            self.launch_selected_tool();
+                        }
                     }
                 }
             }
-        } else {
-            eprintln!("TODO: Select current entry");
+            Page::Provider => {
+                if self.selected_provider_index < self.providers.len() {
+                    let provider = self.providers[self.selected_provider_index].clone();
+                    self.add_to_recents_providers(&provider);
+                    self.selected_provider = Some(provider);
+                    self.advance_page();
+                    self.start_model_loading();
+                }
+            }
+            Page::Model => {
+                if !self.models_loading && self.selected_model_index < self.models.len() {
+                    let model = self.models[self.selected_model_index].clone();
+                    self.add_to_recents_models(&model);
+                    self.launch_selected_tool();
+                }
+            }
+        }
+    }
+
+    fn add_to_recents_tools(&mut self, tool: &str) {
+        self.recents_tools.retain(|t| t != tool);
+        self.recents_tools.insert(0, tool.to_string());
+        if self.recents_tools.len() > 10 {
+            self.recents_tools.pop();
+        }
+    }
+
+    fn add_to_recents_providers(&mut self, provider: &str) {
+        self.recents_providers.retain(|p| p != provider);
+        self.recents_providers.insert(0, provider.to_string());
+        if self.recents_providers.len() > 10 {
+            self.recents_providers.pop();
+        }
+    }
+
+    fn add_to_recents_models(&mut self, model: &str) {
+        self.recents_models.retain(|m| m != model);
+        self.recents_models.insert(0, model.to_string());
+        if self.recents_models.len() > 10 {
+            self.recents_models.pop();
+        }
+    }
+
+    fn start_model_loading(&mut self) {
+        self.models_loading = true;
+        self.models.clear();
+        self.models = STUB_MODELS.iter().map(|m| m.to_string()).collect();
+        self.models_loading = false;
+        self.selected_model_index = 0;
+    }
+
+    pub fn launch_selected_tool(&mut self) -> bool {
+        let tool_name = match &self.selected_tool {
+            Some(name) => name.clone(),
+            None => return false,
+        };
+        let dir = match &self.selected_dir {
+            Some(d) => d.clone(),
+            None => self.current_dir.clone(),
+        };
+        let tool_info = match find_tool_by_display_name(&tool_name) {
+            Some(t) => t,
+            None => return false,
+        };
+        tools::prepare_for_launch();
+        let result = tools::launch_tool(
+            tool_info,
+            &dir,
+            self.selected_provider.as_deref(),
+            self.models.get(self.selected_model_index).map(|s| s.as_str()),
+        );
+        tools::restore_after_launch();
+        match result {
+            LaunchResult::Success => {
+                self.page = Page::Browser;
+                self.selected_tool = None;
+                self.selected_provider = None;
+                self.models.clear();
+                true
+            }
+            LaunchResult::ToolNotInstalled(name) => {
+                self.dialog = Dialog::ToolNotInstalled { tool_name: name };
+                false
+            }
+            LaunchResult::LaunchFailed(msg) => {
+                self.dialog = Dialog::Error { message: msg };
+                false
+            }
         }
     }
 
