@@ -1,23 +1,19 @@
-use crate::app::{ActivePanel, App, Dialog, LeftSection, Page};
+use crate::app::{ActivePanel, App, Dialog, LeftSection, Page, COMMANDS};
 use crate::search::SearchMode;
 use crate::theme::Theme;
+use crate::tools::PROVIDERS;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{block::BorderType, Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{block::{BorderType, Title}, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
-const SETTINGS_ASCII: &str = r#"
-  ____       _   _   _
- / ___|  ___| |_| |_(_)_ __   __ _ ___
- \___ \ / _ \ __| __| | '_ \ / _` / __|
-  ___) |  __/ |_| |_| | | | | (_| \__ \
- |____/ \___|\__|\__|_|_| |_|\__, |___/
-                             |___/
-"#;
-
 pub fn render(app: &App, frame: &mut Frame) {
-    let theme = Theme::with_accent(&app.settings.accent_color);
+    let theme = if app.settings.accent_color == "custom" {
+        Theme::with_custom_hex(&app.settings.custom_color_hex)
+    } else {
+        Theme::with_accent(&app.settings.accent_color)
+    };
     let area = frame.area();
 
     // Main layout: left/right split with bottom bar (no top bar - ASCII moves to left column)
@@ -65,14 +61,52 @@ pub fn render(app: &App, frame: &mut Frame) {
         Dialog::Error { message } => {
             render_error_dialog(frame, area, message, &theme);
         }
+        Dialog::CustomColorInput { hex_input } => {
+            render_custom_color_dialog(frame, area, hex_input, &theme);
+        }
+        Dialog::Opening { tool_name } => {
+            render_opening_dialog(frame, area, tool_name, &theme);
+        }
+        Dialog::CommandBar { query, filtered_indices, selected_index } => {
+            render_command_bar(frame, area, query, filtered_indices, *selected_index, &theme);
+        }
+        Dialog::ProviderConfig { selected_index } => {
+            render_provider_config(frame, area, *selected_index, &theme);
+        }
+        Dialog::KeybindConfig { selected_index, editing_field } => {
+            render_keybind_config(frame, area, app, *selected_index, *editing_field, &theme);
+        }
+        Dialog::EnvConfig { entries, selected_index, editing_field, input_buffer } => {
+            render_env_config(frame, area, entries, *selected_index, *editing_field, input_buffer, &theme);
+        }
+        Dialog::SettingsConfig { selected_index } => {
+            render_settings_config(frame, area, app, *selected_index, &theme);
+        }
     }
 }
 
 /// Render the left column containing ASCII art box and navigation box
 fn render_left_column(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     // Calculate ASCII art height (lines + border)
+    // Calculate ASCII art height (lines + border). If it's too tall for the area, fall back to cat-only ASCII
     let ascii_lines = app.ascii_art.lines().count() as u16;
-    let ascii_height = ascii_lines + 2; // +2 for borders
+    let max_allowed = area.height.saturating_sub(6); // leave space for navigation and bottom bar
+    let ascii_height = if ascii_lines + 2 > max_allowed {
+        // Try loading small cat-only ASCII
+        let small = std::fs::read_to_string("ascii_cat.md").unwrap_or_else(|_| app.ascii_art.clone());
+        let small_lines = small.lines().count() as u16;
+        if small_lines + 2 > max_allowed {
+            // Still too big, clamp to max_allowed
+            max_allowed
+        } else {
+            // Replace app.ascii_art for rendering only
+            // We'll temporarily render the small art by creating a new App-like string
+            // (cheap and safe) — set ascii_lines to small_lines
+            small_lines + 2
+        }
+    } else {
+        ascii_lines + 2
+    };
 
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -95,7 +129,9 @@ fn render_left_column(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 fn render_ascii_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let accent_color = Theme::from_name(&app.settings.accent_color);
 
+    let version_label = format!(" ClumsyCat v{} ", env!("CARGO_PKG_VERSION"));
     let block = Block::default()
+        .title(version_label)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border_normal));
@@ -103,9 +139,21 @@ fn render_ascii_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let text = Paragraph::new(app.ascii_art.as_str())
+    // Try to load the small cat ASCII art first, then fallback to full art, then fallback to text
+    let ascii_to_render = std::fs::read_to_string("ascii_cat.md")
+        .or_else(|_| std::fs::read_to_string("ascii.md"))
+        .unwrap_or_else(|_| {
+            if app.ascii_art.trim().is_empty() {
+                "   CLUMSY\n     CAT".to_string()
+            } else {
+                app.ascii_art.clone()
+            }
+        });
+
+    let text = Paragraph::new(ascii_to_render.as_str())
         .style(Style::default().fg(accent_color))
-        .alignment(Alignment::Center);
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(text, inner);
 }
 
@@ -119,6 +167,10 @@ fn render_browser_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &T
 
     let block = Block::default()
         .title(" Navigation ")
+        .title(
+            Title::from(" [F]av [R]ec ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -215,6 +267,10 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
 
     let block = Block::default()
         .title(" Navigation ")
+        .title(
+            Title::from(" [F]av [R]ec ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -239,8 +295,14 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for tool in &app.favorites_tools {
-            let color = theme.text_dim;
+        for (idx, tool) in app.favorites_tools.iter().enumerate() {
+            let color = if app.tool_left_section == LeftSection::Favorites
+                && app.selected_tool_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(tool).style(color),
@@ -266,8 +328,14 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for tool in &app.recents_tools {
-            let color = theme.text_dim;
+        for (idx, tool) in app.recents_tools.iter().enumerate() {
+            let color = if app.tool_left_section == LeftSection::Recents
+                && app.selected_tool_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(tool).style(color),
@@ -289,6 +357,10 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
 
     let block = Block::default()
         .title(" Navigation ")
+        .title(
+            Title::from(" [F]av [R]ec ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -313,8 +385,14 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for provider in &app.favorites_providers {
-            let color = theme.text_dim;
+        for (idx, provider) in app.favorites_providers.iter().enumerate() {
+            let color = if app.provider_left_section == LeftSection::Favorites
+                && app.selected_provider_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(provider).style(color),
@@ -340,8 +418,14 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for provider in &app.recents_providers {
-            let color = theme.text_dim;
+        for (idx, provider) in app.recents_providers.iter().enumerate() {
+            let color = if app.provider_left_section == LeftSection::Recents
+                && app.selected_provider_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(provider).style(color),
@@ -363,6 +447,10 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     let block = Block::default()
         .title(" Navigation ")
+        .title(
+            Title::from(" [F]av [R]ec ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -387,8 +475,14 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for model in &app.favorites_models {
-            let color = theme.text_dim;
+        for (idx, model) in app.favorites_models.iter().enumerate() {
+            let color = if app.model_left_section == LeftSection::Favorites
+                && app.selected_model_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(model).style(color),
@@ -414,8 +508,14 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
             Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
         ])));
     } else {
-        for model in &app.recents_models {
-            let color = theme.text_dim;
+        for (idx, model) in app.recents_models.iter().enumerate() {
+            let color = if app.model_left_section == LeftSection::Recents
+                && app.selected_model_index == idx
+            {
+                theme.highlight
+            } else {
+                theme.text_dim
+            };
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::raw(model).style(color),
@@ -438,6 +538,10 @@ fn render_browser_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
     let title_bottom = app.current_dir.to_string_lossy().to_string();
     let block = Block::default()
         .title(" Browser ")
+        .title(
+            Title::from(" [B]rowser ")
+                .alignment(Alignment::Right)
+        )
         .title_bottom(Span::raw(title_bottom))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -535,8 +639,17 @@ fn render_browser_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
         })
         .collect();
 
+    // Find the position of selected_index in the filtered list for scrolling
+    let selected_position = indices_to_show
+        .iter()
+        .position(|&i| i == app.selected_index)
+        .unwrap_or(0);
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(selected_position));
+
     let list = List::new(items);
-    frame.render_widget(list, content_area);
+    frame.render_stateful_widget(list, content_area, &mut list_state);
 }
 
 /// Render the tool selection panel
@@ -549,6 +662,10 @@ fn render_tool_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme: 
 
     let block = Block::default()
         .title(" Select Tool ")
+        .title(
+            Title::from(" [T]ools ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -598,6 +715,10 @@ fn render_provider_selection_panel(frame: &mut Frame, area: Rect, app: &App, the
 
     let block = Block::default()
         .title(" Select Provider ")
+        .title(
+            Title::from(" [P]rofile ")
+                .alignment(Alignment::Right)
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -645,8 +766,19 @@ fn render_model_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme:
         theme.border_normal
     };
 
+    // Determine title based on provider
+    let title = if let Some(ref provider) = app.selected_provider {
+        if provider == "GitHub Copilot" {
+            " Select Profile "
+        } else {
+            " Select Model "
+        }
+    } else {
+        " Select Model "
+    };
+
     let block = Block::default()
-        .title(" Select Model ")
+        .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -725,8 +857,11 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
 /// Get context-sensitive keybind text based on current state (all lowercase, separated by bullet)
 fn get_context_keybinds(app: &App) -> String {
-    // Handle quit confirmation first
+    // Handle quit confirmation first (but context-aware)
     if app.quit_confirm >= 1 {
+        if app.settings_open {
+            return "ctrl+d again to quit".to_string();
+        }
         return "ctrl+d x2 confirm quit".to_string();
     }
 
@@ -740,6 +875,13 @@ fn get_context_keybinds(app: &App) -> String {
             Dialog::SudoPassword { .. } => "enter submit  \u{25CF}  esc cancel".to_string(),
             Dialog::ToolNotInstalled { .. } => "enter dismiss".to_string(),
             Dialog::Error { .. } => "enter dismiss".to_string(),
+            Dialog::CustomColorInput { .. } => "type hex code  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string(),
+            Dialog::Opening { .. } => "opening...".to_string(),
+            Dialog::CommandBar { .. } => "type to search  \u{25CF}  tab autocomplete  \u{25CF}  enter select  \u{25CF}  esc close".to_string(),
+            Dialog::ProviderConfig { .. } => "w/s navigate  \u{25CF}  esc close".to_string(),
+            Dialog::KeybindConfig { .. } => "w/s navigate  \u{25CF}  enter edit  \u{25CF}  esc close".to_string(),
+            Dialog::EnvConfig { .. } => "w/s navigate  \u{25CF}  tab switch field  \u{25CF}  enter edit  \u{25CF}  esc close".to_string(),
+            Dialog::SettingsConfig { .. } => "w/s navigate  \u{25CF}  esc close".to_string(),
         };
     }
 
@@ -756,19 +898,19 @@ fn get_context_keybinds(app: &App) -> String {
     // Page-specific keybinds (all lowercase, separated by bullet)
     match app.page {
         Page::Browser => {
-            "/ search  \u{25CF}  space select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+d x2 quit".to_string()
+            "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::ToolSelection => {
-            "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Provider => {
-            "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Model => {
             if app.models_loading {
                 "loading...  \u{25CF}  a back  \u{25CF}  ctrl+d x2 quit".to_string()
             } else {
-                "w/s navigate  \u{25CF}  space select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+                "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
             }
         }
     }
@@ -785,7 +927,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 fn render_dialog_background(frame: &mut Frame, area: Rect) {
     let dim_block = Block::default()
         .style(Style::default().bg(ratatui::style::Color::Black));
-    frame.render_widget(Clear, area);
+    // Removed Clear widget to allow background to show through for semi-transparent effect
     frame.render_widget(dim_block, area);
 }
 
@@ -801,13 +943,16 @@ fn render_add_favorite_dialog(
 
     let dialog_area = centered_rect(50, 10, area);
 
+    // Clear only the dialog area to remove text behind
+    frame.render_widget(Clear, dialog_area);
+
     let block = Block::default()
         .title(" Add to Favorites ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.highlight));
+        .border_style(Style::default().fg(theme.highlight))
+        .style(Style::default().bg(ratatui::style::Color::Black));
 
-    frame.render_widget(Clear, dialog_area);
     frame.render_widget(&block, dialog_area);
 
     let inner = block.inner(dialog_area);
@@ -867,13 +1012,16 @@ fn render_sudo_password_dialog(frame: &mut Frame, area: Rect, password: &str, th
 
     let dialog_area = centered_rect(50, 9, area);
 
+    // Clear only the dialog area to remove text behind
+    frame.render_widget(Clear, dialog_area);
+
     let block = Block::default()
         .title(" Authentication Required ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.highlight));
+        .border_style(Style::default().fg(theme.highlight))
+        .style(Style::default().bg(ratatui::style::Color::Black));
 
-    frame.render_widget(Clear, dialog_area);
     frame.render_widget(&block, dialog_area);
 
     let inner = block.inner(dialog_area);
@@ -914,13 +1062,16 @@ fn render_tool_not_installed_dialog(
 
     let dialog_area = centered_rect(50, 9, area);
 
+    // Clear only the dialog area to remove text behind
+    frame.render_widget(Clear, dialog_area);
+
     let block = Block::default()
         .title(" Tool Not Installed ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ratatui::style::Color::Red));
+        .border_style(Style::default().fg(ratatui::style::Color::Red))
+        .style(Style::default().bg(ratatui::style::Color::Black));
 
-    frame.render_widget(Clear, dialog_area);
     frame.render_widget(&block, dialog_area);
 
     let inner = block.inner(dialog_area);
@@ -953,13 +1104,16 @@ fn render_error_dialog(frame: &mut Frame, area: Rect, message: &str, theme: &The
 
     let dialog_area = centered_rect(60, 10, area);
 
+    // Clear only the dialog area to remove text behind
+    frame.render_widget(Clear, dialog_area);
+
     let block = Block::default()
         .title(" Error ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ratatui::style::Color::Red));
+        .border_style(Style::default().fg(ratatui::style::Color::Red))
+        .style(Style::default().bg(ratatui::style::Color::Black));
 
-    frame.render_widget(Clear, dialog_area);
     frame.render_widget(&block, dialog_area);
 
     let inner = block.inner(dialog_area);
@@ -982,20 +1136,24 @@ fn render_error_dialog(frame: &mut Frame, area: Rect, message: &str, theme: &The
 
 /// Render the settings overlay
 fn render_settings_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    // Dim the background (keeps content visible behind)
     render_dialog_background(frame, area);
 
-    let dialog_area = centered_rect(50, 18, area);
+    // Centered settings dialog box - increased size to prevent clipping
+    let dialog_area = centered_rect(70, 14, area);
 
-    let block = Block::default()
+    // Clear only the dialog area to remove text behind, then render solid background
+    frame.render_widget(Clear, dialog_area);
+
+    let settings_block = Block::default()
         .title(" Settings ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.highlight));
+        .border_style(Style::default().fg(theme.highlight))
+        .style(Style::default().bg(ratatui::style::Color::Black));
 
-    frame.render_widget(Clear, dialog_area);
-    frame.render_widget(&block, dialog_area);
-
-    let inner = block.inner(dialog_area);
+    frame.render_widget(&settings_block, dialog_area);
+    let inner = settings_block.inner(dialog_area);
 
     let accent_style = if app.settings_selection == 0 {
         Style::default()
@@ -1016,34 +1174,52 @@ fn render_settings_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &The
     // Build accent color display with arrows
     let accent_display = format!(
         "< {} >",
-        app.settings.accent_color.to_uppercase()
+        app.settings.accent_color.to_lowercase()
     );
 
     // Build nav mode display with arrows
-    let nav_display = format!("< {} >", app.settings.nav_mode.to_uppercase());
+    let nav_display = format!("< {} >", app.settings.nav_mode.to_lowercase());
 
-    let lines = vec![
-        Line::from(Span::styled(SETTINGS_ASCII, Style::default().fg(theme.text_dim))),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Accent Color:  ", accent_style),
-            Span::styled(accent_display, accent_style),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Navigation:    ", nav_style),
-            Span::styled(nav_display, nav_style),
-        ]),
-        Line::from(""),
-        Line::from(""),
-        Line::from(Span::styled(
-            "[W/S] Navigate  [D/Enter] Change  [Esc] Save & Close",
-            Style::default().fg(theme.text_dim),
-        )),
-    ];
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
 
-    let text = Paragraph::new(lines).alignment(Alignment::Center);
+    // Center the settings items with padding
+    let width = inner.width as usize;
+    let accent_color_line = format!("Accent Color:  {}", accent_display);
+    let accent_padding = (width.saturating_sub(accent_color_line.len())) / 2;
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(accent_padding)),
+        Span::styled("Accent Color:  ", accent_style),
+        Span::styled(accent_display.clone(), accent_style),
+    ]));
+
+    lines.push(Line::from(""));
+
+    let nav_line = format!("Navigation:    {}", nav_display);
+    let nav_padding = (width.saturating_sub(nav_line.len())) / 2;
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(nav_padding)),
+        Span::styled("Navigation:    ", nav_style),
+        Span::styled(nav_display.clone(), nav_style),
+    ]));
+
+    let text = Paragraph::new(lines).alignment(Alignment::Left);
     frame.render_widget(text, inner);
+
+    // Render controls at the very bottom of the dialog
+    let controls_text = "w/s navigate  \u{25CF}  d/enter change  \u{25CF}  esc save & close";
+    let controls_area = Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(1),
+        width: inner.width,
+        height: 1,
+    };
+    let controls = Paragraph::new(Line::from(Span::styled(
+        controls_text,
+        Style::default().fg(theme.text_dim),
+    )))
+    .alignment(Alignment::Center);
+    frame.render_widget(controls, controls_area);
 }
 
 /// Truncate a path string for display
@@ -1053,4 +1229,441 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     } else {
         format!("...{}", &path[path.len() - max_len + 3..])
     }
+}
+
+/// Render the custom color input dialog
+fn render_custom_color_dialog(frame: &mut Frame, area: Rect, hex_input: &str, theme: &Theme) {
+    render_dialog_background(frame, area);
+
+    let popup_area = centered_rect(50, 30, area);
+
+    // Clear only the dialog area to remove text behind
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Enter HEX Color ")
+        .title_style(Style::default().fg(theme.highlight).bold())
+        .border_style(Style::default().fg(theme.highlight))
+        .style(Style::default().bg(ratatui::style::Color::Black));
+    let inner = block.inner(popup_area);
+
+    frame.render_widget(block, popup_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter HEX color code (e.g., #FF6600):",
+            Style::default().fg(theme.text_normal),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            hex_input,
+            Style::default().fg(theme.highlight).bg(theme.border_normal),
+        )),
+    ];
+
+    let text = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(text, inner);
+}
+
+/// Render the keybind configuration dialog
+/// Render the opening dialog as a simple overlay with a spinner (no dimming)
+fn render_opening_dialog(frame: &mut Frame, area: Rect, tool_name: &str, theme: &Theme) {
+    // Render a small centered box on top without clearing or dimming the background
+    let dialog_area = centered_rect(40, 7, area);
+
+    let block = Block::default()
+        .title(" Opening ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    // Draw the dialog box directly on top of existing content
+    frame.render_widget(&block, dialog_area);
+
+    let inner = block.inner(dialog_area);
+
+    // Simple time-based spinner
+    let frames = ["|", "/", "-", "\\"];
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let idx = ((ms / 150) % (frames.len() as u128)) as usize;
+    let spinner = frames[idx];
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{} Opening {}...", spinner, tool_name),
+            Style::default().fg(theme.text_normal),
+        )),
+        Line::from(""),
+    ];
+
+    let text = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(text, inner);
+}
+
+/// Render the command bar overlay (centered in top half of screen)
+fn render_command_bar(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    filtered: &[(usize, i32)],
+    selected: usize,
+    theme: &Theme,
+) {
+    // Position: centered, top portion of screen
+    let width = (area.width * 60 / 100).min(80).max(40);
+    let height = (filtered.len() as u16 + 4).min(area.height / 2).max(6);
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = area.height / 6;
+    let dialog_area = Rect::new(x, y, width, height);
+
+    // Dim background
+    render_dialog_background(frame, area);
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Command Bar ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    // Search field with cursor
+    let cursor = if query.is_empty() { "type to search..." } else { "_" };
+    let search_line = Line::from(vec![
+        Span::styled("> ", Style::default().fg(theme.highlight)),
+        Span::styled(query, Style::default().fg(theme.text_normal)),
+        Span::styled(cursor, Style::default().fg(theme.highlight).add_modifier(Modifier::SLOW_BLINK)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(search_line),
+        Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1),
+    );
+
+    // Separator
+    let sep = "─".repeat(inner.width.saturating_sub(2) as usize);
+    frame.render_widget(
+        Paragraph::new(Span::styled(sep, Style::default().fg(theme.border_normal))),
+        Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1),
+    );
+
+    // Command list
+    let list_area = Rect::new(inner.x + 1, inner.y + 2, inner.width.saturating_sub(2), inner.height.saturating_sub(3));
+    let max_items = (list_area.height as usize).min(filtered.len());
+
+    for (i, &(cmd_idx, _)) in filtered
+        .iter()
+        .enumerate()
+        .take(max_items)
+    {
+        let cmd = &COMMANDS[cmd_idx];
+        let style = if i == selected {
+            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_normal)
+        };
+        let prefix = if i == selected { "▸ " } else { "  " };
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(cmd.name, style),
+            Span::styled(" - ", Style::default().fg(theme.text_dim)),
+            Span::styled(cmd.description, Style::default().fg(theme.text_dim)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect::new(list_area.x, list_area.y + i as u16, list_area.width, 1),
+        );
+    }
+
+    // Hint at bottom
+    if inner.height > 4 {
+        let hint = Line::from(vec![
+            Span::styled("Tab", Style::default().fg(theme.highlight)),
+            Span::styled(" autocomplete  ", Style::default().fg(theme.text_dim)),
+            Span::styled("Enter", Style::default().fg(theme.highlight)),
+            Span::styled(" select  ", Style::default().fg(theme.text_dim)),
+            Span::styled("Esc", Style::default().fg(theme.highlight)),
+            Span::styled(" close", Style::default().fg(theme.text_dim)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hint).alignment(Alignment::Center),
+            Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1),
+        );
+    }
+}
+
+/// Render the provider configuration dialog
+fn render_provider_config(
+    frame: &mut Frame,
+    area: Rect,
+    selected_index: usize,
+    theme: &Theme,
+) {
+    let dialog_area = centered_rect(60, 50, area);
+    render_dialog_background(frame, area);
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Provider Configuration ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let items: Vec<ListItem> = PROVIDERS
+        .iter()
+        .enumerate()
+        .map(|(i, provider)| {
+            let style = if i == selected_index {
+                Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text_normal)
+            };
+            let prefix = if i == selected_index { "▸ " } else { "  " };
+            let auth_type = if *provider == "GitHub Copilot" { "(proxy login)" } else { "(env key)" };
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(*provider, style),
+                Span::styled(format!(" {}", auth_type), Style::default().fg(theme.text_dim)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items);
+    frame.render_widget(list, Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), inner.height.saturating_sub(2)));
+}
+
+/// Render the keybind configuration dialog
+fn render_keybind_config(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    selected_index: usize,
+    editing_field: Option<usize>,
+    theme: &Theme,
+) {
+    let dialog_area = centered_rect(50, 40, area);
+    render_dialog_background(frame, area);
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Keybind Configuration ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let keybinds = &app.settings.keybinds;
+    let items = vec![
+        ("Up", &keybinds.up),
+        ("Down", &keybinds.down),
+        ("Left", &keybinds.left),
+        ("Right", &keybinds.right),
+    ];
+
+    for (i, (label, value)) in items.iter().enumerate() {
+        let is_selected = i == selected_index;
+        let is_editing = editing_field == Some(i);
+        let style = if is_selected {
+            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_normal)
+        };
+        let prefix = if is_selected { "▸ " } else { "  " };
+        let value_display = if is_editing {
+            "[_]".to_string()
+        } else {
+            format!("[{}]", value)
+        };
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", label), style),
+            Span::styled(value_display, if is_editing {
+                Style::default().fg(theme.highlight).add_modifier(Modifier::SLOW_BLINK)
+            } else {
+                Style::default().fg(theme.text_dim)
+            }),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+        );
+    }
+
+    // Preset display
+    let preset_line = Line::from(vec![
+        Span::styled("  Preset: ", Style::default().fg(theme.text_normal)),
+        Span::styled(&app.settings.nav_mode, Style::default().fg(theme.highlight)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(preset_line),
+        Rect::new(inner.x + 1, inner.y + 6, inner.width.saturating_sub(2), 1),
+    );
+
+    // Hint
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.highlight)),
+        Span::styled(" edit  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.highlight)),
+        Span::styled(" close", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(hint).alignment(Alignment::Center),
+        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+    );
+}
+
+/// Render the environment variables configuration dialog
+fn render_env_config(
+    frame: &mut Frame,
+    area: Rect,
+    entries: &[(String, String)],
+    selected_index: usize,
+    editing_field: Option<usize>,
+    input_buffer: &str,
+    theme: &Theme,
+) {
+    let dialog_area = centered_rect(70, 60, area);
+    render_dialog_background(frame, area);
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Environment Variables ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    // List entries
+    for (i, (key, value)) in entries.iter().enumerate() {
+        let is_selected = i == selected_index;
+        let style = if is_selected {
+            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_normal)
+        };
+        let prefix = if is_selected { "▸ " } else { "  " };
+
+        let key_display = if is_selected && editing_field == Some(0) {
+            format!("{}_", input_buffer)
+        } else {
+            key.clone()
+        };
+
+        let value_display = if is_selected && editing_field == Some(1) {
+            format!("{}_", input_buffer)
+        } else {
+            "*".repeat(value.len().min(20))
+        };
+
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(key_display, style),
+            Span::styled(" = ", Style::default().fg(theme.text_dim)),
+            Span::styled(value_display, Style::default().fg(theme.text_dim)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+        );
+    }
+
+    // Add new entry option
+    let add_idx = entries.len();
+    let is_add_selected = selected_index == add_idx;
+    let add_style = if is_add_selected {
+        Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.text_dim)
+    };
+    let add_prefix = if is_add_selected { "▸ " } else { "  " };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(add_prefix, add_style),
+            Span::styled("+ Add new variable", add_style),
+        ])),
+        Rect::new(inner.x + 1, inner.y + 1 + add_idx as u16, inner.width.saturating_sub(2), 1),
+    );
+
+    // Hint
+    let hint = Line::from(vec![
+        Span::styled("Tab", Style::default().fg(theme.highlight)),
+        Span::styled(" switch field  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Enter", Style::default().fg(theme.highlight)),
+        Span::styled(" edit  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.highlight)),
+        Span::styled(" close", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(hint).alignment(Alignment::Center),
+        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+    );
+}
+
+/// Render the settings configuration dialog
+fn render_settings_config(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    selected_index: usize,
+    theme: &Theme,
+) {
+    let dialog_area = centered_rect(50, 30, area);
+    render_dialog_background(frame, area);
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Settings ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.highlight));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let settings_items = vec![
+        ("Accent Color", &app.settings.accent_color),
+        ("Navigation Mode", &app.settings.nav_mode),
+    ];
+
+    for (i, (label, value)) in settings_items.iter().enumerate() {
+        let is_selected = i == selected_index;
+        let style = if is_selected {
+            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_normal)
+        };
+        let prefix = if is_selected { "▸ " } else { "  " };
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", label), style),
+            Span::styled(*value, Style::default().fg(theme.text_dim)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+        );
+    }
+
+    // Hint
+    let hint = Line::from(vec![
+        Span::styled("Use existing settings overlay (Ctrl+S) for full options", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(hint).alignment(Alignment::Center),
+        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+    );
 }
