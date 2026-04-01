@@ -992,7 +992,7 @@ fn get_context_keybinds(app: &App) -> String {
             return "space unfocus  \u{25CF}  type input to proxy  \u{25CF}  ctrl+c/d to proxy"
                 .to_string();
         } else if terminal.visible {
-            return "enter focus  \u{25CF}  c hide  \u{25CF}  ctrl+p stop  \u{25CF}  normal navigation".to_string();
+            return "enter focus  \u{25CF}  ctrl+p stop  \u{25CF}  normal navigation".to_string();
         }
     }
 
@@ -1000,22 +1000,22 @@ fn get_context_keybinds(app: &App) -> String {
     match app.page {
         Page::Browser => {
             if app.proxy_terminal.is_some() {
-                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  c proxy  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             } else {
-                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             }
         }
         Page::ToolSelection => {
-            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Provider => {
-            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Model => {
             if app.models_loading {
-                "loading...  \u{25CF}  a back  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+                "loading...  \u{25CF}  a back  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             } else {
-                "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+                "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             }
         }
     }
@@ -1374,7 +1374,10 @@ fn render_command_bar(
 ) {
     // Position: centered, top portion of screen
     let width = (area.width * 60 / 100).clamp(40, 80);
-    let height = (filtered.len() as u16 + 4).min(area.height / 2).max(6);
+    // Scale height: 1 line per command, max 5 commands visible, min 6 for header/footer
+    let max_visible_commands = 5;
+    let content_height = (filtered.len() as u16).min(max_visible_commands as u16);
+    let height = content_height + 4; // +4 for search, separator, and footer
     let x = (area.width.saturating_sub(width)) / 2;
     let y = area.height / 6;
     let dialog_area = Rect::new(x, y, width, height);
@@ -1420,7 +1423,7 @@ fn render_command_bar(
         Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1),
     );
 
-    // Command list
+    // Command list with scrolling
     let list_area = Rect::new(
         inner.x + 1,
         inner.y + 2,
@@ -1429,16 +1432,24 @@ fn render_command_bar(
     );
     let max_items = (list_area.height as usize).min(filtered.len());
 
-    for (i, &(cmd_idx, _)) in filtered.iter().enumerate().take(max_items) {
+    // Calculate scroll offset to keep selected item visible
+    let scroll_offset = if selected > max_visible_commands - 1 {
+        selected - max_visible_commands + 1
+    } else {
+        0
+    };
+
+    for (display_idx, (actual_idx, &(cmd_idx, _))) in filtered.iter().enumerate().skip(scroll_offset).take(max_items).enumerate() {
         let cmd = &COMMANDS[cmd_idx];
-        let style = if i == selected {
+        let is_selected = actual_idx == selected;
+        let style = if is_selected {
             Style::default()
                 .fg(theme.highlight)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_normal)
         };
-        let prefix = if i == selected { "▸ " } else { "  " };
+        let prefix = if is_selected { "▸ " } else { "  " };
         let line = Line::from(vec![
             Span::styled(prefix, style),
             Span::styled(cmd.name, style),
@@ -1447,7 +1458,7 @@ fn render_command_bar(
         ]);
         frame.render_widget(
             Paragraph::new(line),
-            Rect::new(list_area.x, list_area.y + i as u16, list_area.width, 1),
+            Rect::new(list_area.x, list_area.y + display_idx as u16, list_area.width, 1),
         );
     }
 
