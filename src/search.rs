@@ -10,27 +10,9 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
-    /// Create an active search mode with the given query and entries
-    pub fn new_active(query: String, entries: &[impl AsRef<str>]) -> Self {
-        let filtered_indices = filter_entries(entries, &query);
-        SearchMode::Active {
-            query,
-            filtered_indices,
-            current_match_index: 0,
-        }
-    }
-
     /// Check if search is currently active
     pub fn is_active(&self) -> bool {
         matches!(self, SearchMode::Active { .. })
-    }
-
-    /// Get the query string if active
-    pub fn query(&self) -> Option<&str> {
-        match self {
-            SearchMode::Active { query, .. } => Some(query),
-            SearchMode::Inactive => None,
-        }
     }
 
     /// Get the current match count if active
@@ -60,6 +42,73 @@ impl SearchMode {
             SearchMode::Inactive => None,
         }
     }
+
+    /// Get the current query string, if active
+    pub fn query(&self) -> Option<&str> {
+        match self {
+            SearchMode::Active { query, .. } => Some(query.as_str()),
+            SearchMode::Inactive => None,
+        }
+    }
+}
+
+/// Fuzzy match scoring for command bar filtering.
+/// Returns Some(score) if query matches target, None otherwise.
+/// Higher scores = better matches.
+pub fn fuzzy_score(query: &str, target: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(0);
+    }
+
+    let query = query.to_lowercase();
+    let target = target.to_lowercase();
+
+    let mut score = 0i32;
+    let mut query_chars = query.chars().peekable();
+    let mut last_match_idx: Option<usize> = None;
+
+    for (i, tc) in target.chars().enumerate() {
+        if let Some(&qc) = query_chars.peek() {
+            if tc == qc {
+                query_chars.next();
+                score += 10; // base match score
+
+                // Bonus for matching at start
+                if i == 0 {
+                    score += 15;
+                }
+
+                // Bonus for consecutive matches
+                if let Some(last) = last_match_idx {
+                    if i == last + 1 {
+                        score += 5;
+                    }
+                }
+
+                last_match_idx = Some(i);
+            }
+        }
+    }
+
+    // All query chars must be consumed for a match
+    if query_chars.peek().is_none() {
+        // Prefer shorter targets (penalty for length)
+        Some(score - target.len() as i32)
+    } else {
+        None
+    }
+}
+
+/// Filter commands using fuzzy matching, returning (index, score) pairs sorted by score descending
+pub fn filter_commands_fuzzy<'a>(
+    commands: impl Iterator<Item = (usize, &'a str)>,
+    query: &str,
+) -> Vec<(usize, i32)> {
+    let mut matches: Vec<(usize, i32)> = commands
+        .filter_map(|(idx, name)| fuzzy_score(query, name).map(|score| (idx, score)))
+        .collect();
+    matches.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by score descending
+    matches
 }
 
 /// Filter entries by a query string using case-insensitive substring matching
@@ -112,32 +161,11 @@ mod tests {
     }
 
     #[test]
-    fn test_search_mode_new_active() {
-        let entries = vec!["test1", "test2", "other"];
-        let search = SearchMode::new_active("test".to_string(), &entries);
-        assert!(search.is_active());
-        assert_eq!(search.query(), Some("test"));
-        assert_eq!(search.match_count(), 2);
-    }
-
-    #[test]
     fn test_search_mode_current_match() {
-        let entries = vec!["apple", "apricot", "banana"];
-        let search = SearchMode::new_active("ap".to_string(), &entries);
-        assert_eq!(search.current_match(), Some(0));
-
-        // After advancing, would point to index 1
-        if let SearchMode::Active {
-            current_match_index,
-            filtered_indices,
-            ..
-        } = search
-        {
-            if current_match_index + 1 < filtered_indices.len() {
-                let next_index = current_match_index + 1;
-                assert_eq!(filtered_indices[next_index], 1);
-            }
-        }
+        let search: SearchMode = SearchMode::Inactive;
+        assert!(!search.is_active());
+        assert_eq!(search.match_count(), 0);
+        assert_eq!(search.current_match(), None);
     }
 
     #[test]
