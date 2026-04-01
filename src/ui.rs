@@ -1374,8 +1374,8 @@ fn render_command_bar(
 ) {
     // Position: centered, top portion of screen
     let width = (area.width * 60 / 100).clamp(40, 80);
-    // Scale height: 1 line per command, max 5 commands visible, min 6 for header/footer
-    let max_visible_commands = 5;
+    // Scale height: 1 line per command, max 6 commands visible, +4 for header/footer
+    let max_visible_commands = 6;
     let content_height = (filtered.len() as u16).min(max_visible_commands as u16);
     let height = content_height + 4; // +4 for search, separator, and footer
     let x = (area.width.saturating_sub(width)) / 2;
