@@ -1,4 +1,5 @@
 use crate::config::{Config, Settings};
+use crate::claude_config::{ClaudeSettings, ModelProfile};
 use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
 use crate::terminal::ProxyTerminal;
@@ -1232,6 +1233,60 @@ impl App {
                         // Keybind Config (no left action)
                     }
                     _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_global_config_input(&mut self, code: ratatui::crossterm::event::KeyCode) {
+        use ratatui::crossterm::event::KeyCode;
+
+        match code {
+            KeyCode::Esc => {
+                self.global_config_open = false;
+                self.global_config_selection = 0;
+            }
+            KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Up => {
+                if self.global_config_selection > 0 {
+                    self.global_config_selection -= 1;
+                } else {
+                    self.global_config_selection = 2;
+                }
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
+                self.global_config_selection = (self.global_config_selection + 1) % 3;
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Right | KeyCode::Enter => {
+                let profile = match self.global_config_selection {
+                    0 => ModelProfile::ClaudeMax,
+                    1 => ModelProfile::ClaudePro,
+                    2 => ModelProfile::ClaudeFree,
+                    _ => ModelProfile::ClaudeMax,
+                };
+
+                match ClaudeSettings::load() {
+                    Ok(mut settings) => {
+                        settings.set_model_profile(profile);
+                        match settings.save() {
+                            Ok(_) => {
+                                self.global_config_open = false;
+                                self.global_config_selection = 0;
+                            }
+                            Err(e) => {
+                                self.dialog = Dialog::Error {
+                                    message: format!("cannot write to settings.json: {}", e),
+                                };
+                                self.global_config_open = false;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.dialog = Dialog::Error {
+                            message: format!("cannot load settings.json: {}", e),
+                        };
+                        self.global_config_open = false;
+                    }
                 }
             }
             _ => {}
