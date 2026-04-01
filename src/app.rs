@@ -1,7 +1,9 @@
 use crate::config::{Config, Settings};
 use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
+use crate::terminal::ProxyTerminal;
 use crate::tools::{self, find_tool_by_display_name, LaunchResult, PROVIDERS, STUB_MODELS, TOOLS};
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -22,10 +24,6 @@ pub enum Dialog {
     None,
     AddToFavorites {
         path: PathBuf,
-    },
-    SudoPassword {
-        target_path: PathBuf,
-        password_input: String,
     },
     ToolNotInstalled {
         tool_name: String,
@@ -74,6 +72,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "keybindconf", description: "Customize keybindings" },
     Command { name: "env", description: "Manage environment variables" },
     Command { name: "settings", description: "Open settings" },
+    Command { name: "globalconf", description: "switch claude code model configuration" },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -97,8 +96,8 @@ pub struct App {
     pub search_mode: SearchMode,
     pub search_typing_mode: bool,  // true when in typing mode, false when in navigation mode
     pub settings: Settings,
-    pub previous_page: Option<Page>,
     pub ascii_art: String,
+    pub default_mode: bool,  // true when launched with --default flag
 
     // Page 1: Browser state
     pub current_dir: PathBuf,
@@ -147,15 +146,28 @@ pub struct App {
     pub settings_open: bool,
     pub settings_selection: usize,
 
+    // Global config overlay state
+    pub global_config_open: bool,
+    pub global_config_selection: usize,
+
     // Command bar state
-    pub last_shift_time: Option<Instant>,
+
+    // Provider configuration state
+    pub pending_copilot_login: bool,
+
+    // Copilot proxy state
+    pub copilot_proxy_active: bool,
+    pub copilot_proxy_last_check: Instant,
+
+    // Embedded proxy terminal
+    pub proxy_terminal: Option<ProxyTerminal>,
 
     // Config for saving
     config: Config,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(default_mode: bool) -> Self {
         // Load configuration
         let config = Config::load();
 
@@ -166,7 +178,12 @@ impl App {
         let current_dir = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/"));
+            .unwrap_or_else(|_| {
+                #[cfg(windows)]
+                { PathBuf::from("C:\\") }
+                #[cfg(not(windows))]
+                { PathBuf::from("/") }
+            });
 
         let dir_entries = load_dir_entries(&current_dir);
 
@@ -176,11 +193,24 @@ impl App {
             .get("dirs")
             .map(|v| v.iter().map(PathBuf::from).collect())
             .unwrap_or_else(|| {
-                vec![
-                    PathBuf::from("/"),
-                    PathBuf::from("/tmp"),
-                    PathBuf::from("/home"),
-                ]
+                #[cfg(windows)]
+                {
+                    vec![
+                        PathBuf::from("C:\\"),
+                        dirs::home_dir().unwrap_or_else(|| PathBuf::from("C:\\Users")),
+                        std::env::var("TEMP")
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|_| PathBuf::from("C:\\Windows\\Temp")),
+                    ]
+                }
+                #[cfg(not(windows))]
+                {
+                    vec![
+                        PathBuf::from("/"),
+                        PathBuf::from("/tmp"),
+                        PathBuf::from("/home"),
+                    ]
+                }
             });
 
         let recents_dirs = config
@@ -223,15 +253,26 @@ impl App {
         // Provider list from tools.rs
         let providers: Vec<String> = PROVIDERS.iter().map(|p| p.to_string()).collect();
 
+        // Determine starting page and pre-selections based on default_mode
+        let (page, selected_tool, selected_provider) = if default_mode {
+            // Pre-select Claude Code and GitHub Copilot
+            let tool = find_tool_by_display_name("Claude Code")
+                .map(|t| t.display_name.to_string());
+            let provider = Some("GitHub Copilot".to_string());
+            (Page::Browser, tool, provider)
+        } else {
+            (Page::ToolSelection, None, None)
+        };
+
         Self {
             // Global state
-            page: Page::default(),
+            page,
             dialog: Dialog::default(),
             search_mode: SearchMode::Inactive,
             search_typing_mode: false,
             settings: config.settings.clone(),
-            previous_page: None,
             ascii_art,
+            default_mode,
 
             // Page 1: Browser state
             current_dir,
@@ -249,7 +290,7 @@ impl App {
             favorites_tools,
             recents_tools,
             tool_left_section: LeftSection::default(),
-            selected_tool: None,
+            selected_tool,
 
             // Page 3: Provider selection state
             providers,
@@ -257,7 +298,7 @@ impl App {
             favorites_providers,
             recents_providers,
             provider_left_section: LeftSection::default(),
-            selected_provider: None,
+            selected_provider,
 
             // Page 4: Model selection state
             models: Vec::new(),
@@ -280,8 +321,19 @@ impl App {
             settings_open: false,
             settings_selection: 0,
 
-            // Command bar state
-            last_shift_time: None,
+            // Global config overlay state
+            global_config_open: false,
+            global_config_selection: 0,
+
+            // Provider configuration state
+            pending_copilot_login: false,
+
+            // Copilot proxy state
+            copilot_proxy_active: tools::check_copilot_proxy_running(),
+            copilot_proxy_last_check: Instant::now(),
+
+            // Embedded proxy terminal
+            proxy_terminal: None,
 
             // Config for saving
             config,
@@ -329,15 +381,96 @@ impl App {
         }
     }
 
-    /// Open the settings overlay, saving current page
-    pub fn open_settings(&mut self) {
-        self.previous_page = Some(self.page);
+    /// Start the proxy in background PTY
+    pub fn start_proxy(&mut self) {
+        if self.proxy_terminal.is_some() {
+            return; // Already running
+        }
+
+        // Use ASCII tile dimensions for terminal size
+        let size = (25, 10); // Approximate ASCII art tile size
+
+        match tools::spawn_proxy_terminal(size) {
+            Ok(terminal) => {
+                self.proxy_terminal = Some(terminal);
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to start proxy: {}", e));
+            }
+        }
     }
 
-    /// Close the settings overlay, restoring previous page
-    pub fn close_settings(&mut self) {
-        if let Some(prev) = self.previous_page.take() {
-            self.page = prev;
+    /// Stop the proxy and clean up
+    pub fn stop_proxy(&mut self) {
+        if let Some(mut terminal) = self.proxy_terminal.take() {
+            // Kill the proxy process
+            let _ = terminal.child.kill();
+        }
+    }
+
+    /// Toggle proxy terminal visibility
+    pub fn toggle_proxy_visible(&mut self) {
+        if let Some(ref mut terminal) = self.proxy_terminal {
+            terminal.visible = !terminal.visible;
+        }
+    }
+
+    /// Update proxy buffer with new output
+    pub fn update_proxy_buffer(&mut self) {
+        if let Some(ref mut terminal) = self.proxy_terminal {
+            if !terminal.is_alive() {
+                // Process died, clean up
+                self.proxy_terminal = None;
+                self.error = Some("Claude proxy has exited".to_string());
+                return;
+            }
+
+            // Update buffer with new output
+            if let Err(e) = terminal.update() {
+                self.error = Some(format!("Terminal update error: {}", e));
+            }
+        }
+    }
+
+    /// Forward input to proxy terminal
+    pub fn forward_to_proxy(&mut self, key_code: KeyCode, modifiers: KeyModifiers) {
+        if let Some(ref mut terminal) = self.proxy_terminal {
+            let input = match key_code {
+                KeyCode::Char(c) => {
+                    if modifiers.contains(KeyModifiers::CONTROL) {
+                        match c.to_ascii_lowercase() {
+                            'c' => vec![3], // Ctrl+C
+                            'd' => vec![4], // Ctrl+D
+                            'z' => vec![26], // Ctrl+Z
+                            _ => vec![c as u8],
+                        }
+                    } else {
+                        vec![c as u8]
+                    }
+                }
+                KeyCode::Enter => vec![b'\r'],
+                KeyCode::Backspace => vec![8],
+                KeyCode::Tab => vec![b'\t'],
+                KeyCode::Up => b"\x1B[A".to_vec(),
+                KeyCode::Down => b"\x1B[B".to_vec(),
+                KeyCode::Right => b"\x1B[C".to_vec(),
+                KeyCode::Left => b"\x1B[D".to_vec(),
+                _ => return,
+            };
+
+            if let Err(e) = terminal.write_input(&input) {
+                self.error = Some(format!("Failed to write to terminal: {}", e));
+            }
+        }
+    }
+
+    /// Clean up resources before app exit
+    pub fn cleanup(&mut self) {
+        // Stop proxy if running
+        if let Some(mut terminal) = self.proxy_terminal.take() {
+            let _ = terminal.child.kill();
+            // Give it a moment to terminate gracefully
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 
@@ -345,7 +478,22 @@ impl App {
         use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 
         loop {
+            // Update proxy buffer on each frame
+            self.update_proxy_buffer();
+
             terminal.draw(|frame| crate::ui::render(self, frame))?;
+
+            // Check if copilot login is pending
+            if self.pending_copilot_login {
+                self.pending_copilot_login = false;
+                self.launch_copilot_login(terminal);
+            }
+
+            // Periodic copilot proxy health check (every 5 seconds)
+            if self.copilot_proxy_last_check.elapsed() > Duration::from_secs(5) {
+                self.copilot_proxy_active = tools::check_copilot_proxy_running();
+                self.copilot_proxy_last_check = Instant::now();
+            }
 
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -365,6 +513,18 @@ impl App {
                     if self.dialog != Dialog::None {
                         self.handle_dialog_input(code, key.modifiers);
                         continue;
+                    }
+
+                    // Handle focused proxy terminal input (second highest priority)
+                    if let Some(ref mut proxy) = self.proxy_terminal {
+                        if proxy.focused {
+                            if code == KeyCode::Char(' ') {
+                                proxy.focused = false;  // Space unfocuses
+                            } else {
+                                self.forward_to_proxy(code, key.modifiers);
+                            }
+                            continue;
+                        }
                     }
 
                     // Handle settings overlay input (but allow ctrl+d to bypass)
@@ -472,6 +632,30 @@ impl App {
 
                     // Normal mode input handling
                     match code {
+                        // Proxy controls
+                        KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if self.proxy_terminal.is_some() {
+                                self.stop_proxy();
+                            } else {
+                                self.start_proxy();
+                            }
+                        }
+                        KeyCode::Enter => {
+                            // Focus proxy terminal if visible, otherwise use normal handler
+                            if let Some(ref mut proxy) = self.proxy_terminal {
+                                if proxy.visible {
+                                    proxy.focused = true;
+                                } else {
+                                    self.quit_confirm = 0;
+                                    self.quit_timer = None;
+                                    self.handle_select(terminal);
+                                }
+                            } else {
+                                self.quit_confirm = 0;
+                                self.quit_timer = None;
+                                self.handle_select(terminal);
+                            }
+                        }
                         KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if self.handle_ctrl_d() {
                                 break; // Exit the event loop
@@ -539,6 +723,24 @@ impl App {
                                 self.selected_model_index = 0;
                             }
                         }
+                        // Shift+C - Toggle background proxy (non-interactive)
+                        KeyCode::Char('C') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            if self.proxy_terminal.is_some() {
+                                self.stop_proxy();
+                            } else {
+                                self.start_proxy();
+                            }
+                        }
+                        // Global hotkey: c - Toggle Copilot proxy visibility or interactive login
+                        KeyCode::Char('c') => {
+                            if let Some(_) = self.proxy_terminal {
+                                self.toggle_proxy_visible();
+                            } else if self.copilot_proxy_active {
+                                self.stop_copilot_proxy();
+                            } else {
+                                self.start_copilot_proxy(terminal);
+                            }
+                        }
                         KeyCode::Tab => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
@@ -591,6 +793,10 @@ impl App {
                         KeyCode::Esc => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
+                            // In default mode, Esc from Browser page exits the app
+                            if self.default_mode && self.page == Page::Browser {
+                                break;
+                            }
                             // Navigate back to previous page, or do nothing if on first page
                             if self.page != Page::Browser {
                                 self.go_back();
@@ -610,11 +816,6 @@ impl App {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
                             self.handle_open(terminal);
-                        }
-                        KeyCode::Enter => {
-                            self.quit_confirm = 0;
-                            self.quit_timer = None;
-                            self.handle_select(terminal);
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Left => {
                             self.quit_confirm = 0;
@@ -683,24 +884,6 @@ impl App {
                         self.add_to_favorites(path_to_add);
                         self.dialog = Dialog::None;
                         self.dialog_selection = 0;
-                    }
-                    _ => {}
-                }
-            }
-            Dialog::SudoPassword { target_path: _, password_input } => {
-                match code {
-                    KeyCode::Esc => {
-                        self.dialog = Dialog::None;
-                    }
-                    KeyCode::Enter => {
-                        // Would authenticate here - for now just close
-                        self.dialog = Dialog::None;
-                    }
-                    KeyCode::Backspace => {
-                        password_input.pop();
-                    }
-                    KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                        password_input.push(c);
                     }
                     _ => {}
                 }
@@ -790,6 +973,15 @@ impl App {
             }
             Dialog::ProviderConfig { selected_index } => {
                 match code {
+                    KeyCode::Enter => {
+                        let provider = PROVIDERS[*selected_index];
+                        if provider == "GitHub Copilot" {
+                            self.dialog = Dialog::None;
+                            self.pending_copilot_login = true;
+                        } else {
+                            self.dialog = Dialog::None;
+                        }
+                    }
                     KeyCode::Esc => self.dialog = Dialog::None,
                     KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => {
                         if *selected_index > 0 {
@@ -1358,7 +1550,13 @@ impl App {
         match self.page {
             Page::Browser => {
                 self.selected_dir = Some(self.current_dir.clone());
-                self.advance_page();
+                if self.default_mode {
+                    // In default mode, skip directly to Model page
+                    self.page = Page::Model;
+                    self.start_model_loading();
+                } else {
+                    self.advance_page();
+                }
             }
             Page::ToolSelection => {
                 if self.selected_tool_index < self.tools.len() {
@@ -1437,7 +1635,11 @@ impl App {
         // For GitHub Copilot, show profiles instead of models
         if let Some(ref provider) = self.selected_provider {
             if provider == "GitHub Copilot" {
-                self.models = vec!["Claude".to_string(), "OpenAI".to_string()];
+                self.models = vec![
+                    "Claude Max".to_string(),
+                    "Claude Pro".to_string(),
+                    "Claude Free".to_string(),
+                ];
             } else {
                 self.models = STUB_MODELS.iter().map(|m| m.to_string()).collect();
             }
@@ -1468,7 +1670,11 @@ impl App {
             tool_name: tool_name.clone(),
         };
 
-        tools::prepare_for_launch();
+        // Render the loading dialog to the user immediately before exiting TUI
+        terminal.draw(|frame| crate::ui::render(self, frame)).ok();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        tools::prepare_for_launch(&tool_name);
         let result = tools::launch_tool(
             tool_info,
             &dir,
@@ -1501,6 +1707,89 @@ impl App {
                 false
             }
         }
+    }
+
+    /// Launch copilot-api for interactive login
+    fn launch_copilot_login(&mut self, terminal: &mut ratatui::DefaultTerminal) {
+        use std::process::{Command, Stdio};
+
+        tools::prepare_for_launch("copilot-api");
+
+        let result = Command::new("copilot-api")
+            .args(["start", "--proxy-env"])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .and_then(|mut child| child.wait());
+
+        tools::restore_after_launch();
+
+        let _ = terminal.clear();
+        terminal.draw(|frame| crate::ui::render(self, frame)).ok();
+
+        match result {
+            Ok(status) => {
+                if !status.success() {
+                    self.dialog = Dialog::Error {
+                        message: format!("copilot-api exited with status: {}", status),
+                    };
+                }
+            }
+            Err(e) => {
+                self.dialog = Dialog::Error {
+                    message: format!("failed to start copilot-api: {}", e),
+                };
+            }
+        }
+    }
+
+    fn start_copilot_proxy(&mut self, terminal: &mut ratatui::DefaultTerminal) {
+        self.launch_copilot_login(terminal);
+        self.copilot_proxy_active = tools::check_copilot_proxy_running();
+        self.copilot_proxy_last_check = Instant::now();
+    }
+
+    fn stop_copilot_proxy(&mut self) {
+        use std::process::{Command, Stdio};
+
+        #[cfg(unix)]
+        let result = Command::new("pkill")
+            .args(["-f", "copilot-api"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        #[cfg(windows)]
+        let result = Command::new("taskkill")
+            .args(["/F", "/IM", "copilot-api.exe"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        #[cfg(not(any(unix, windows)))]
+        let result: Result<std::process::ExitStatus, std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Platform not supported"
+        ));
+
+        match result {
+            Ok(status) => {
+                if status.success() {
+                    self.copilot_proxy_active = false;
+                } else {
+                    self.copilot_proxy_active = tools::check_copilot_proxy_running();
+                }
+            }
+            Err(e) => {
+                self.dialog = Dialog::Error {
+                    message: format!("failed to stop copilot-api: {}", e),
+                };
+            }
+        }
+        self.copilot_proxy_last_check = Instant::now();
     }
 
     /// Reset the application to homepage/startup state
@@ -1677,17 +1966,6 @@ impl App {
         }
     }
 
-    /// Confirm the current search selection and exit search mode
-    pub fn confirm_search(&mut self) {
-        // Selection is already updated, just exit search mode
-        self.search_mode = SearchMode::Inactive;
-    }
-
-    /// Exit search mode without changing selection
-    pub fn exit_search(&mut self) {
-        self.search_mode = SearchMode::Inactive;
-        self.search_typing_mode = false;
-    }
 
     /// Get the names of items in the current list view
     fn get_current_list_names(&self) -> Vec<String> {
