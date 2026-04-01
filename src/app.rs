@@ -2126,6 +2126,11 @@ impl App {
                 // settings
                 self.dialog = Dialog::SettingsConfig { selected_index: 0 };
             }
+            4 => {
+                // globalconf
+                self.global_config_open = true;
+                self.global_config_selection = 0;
+            }
             _ => {}
         }
     }
