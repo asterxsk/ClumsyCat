@@ -3,12 +3,12 @@ use crate::search::SearchMode;
 use crate::theme::Theme;
 use crate::tools::PROVIDERS;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{block::{BorderType, Title}, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{block::BorderType, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
-pub fn render(app: &App, frame: &mut Frame) {
+pub fn render(app: &mut App, frame: &mut Frame) {
     let theme = if app.settings.accent_color == "custom" {
         Theme::with_custom_hex(&app.settings.custom_color_hex)
     } else {
@@ -46,14 +46,16 @@ pub fn render(app: &App, frame: &mut Frame) {
         render_settings_overlay(frame, area, app, &theme);
     }
 
+    // Render global config overlay if open
+    if app.global_config_open {
+        render_global_config_overlay(app, frame);
+    }
+
     // Render dialogs on top of everything
     match &app.dialog {
         Dialog::None => {}
         Dialog::AddToFavorites { path } => {
             render_add_favorite_dialog(frame, area, path, app.dialog_selection, &theme);
-        }
-        Dialog::SudoPassword { password_input, .. } => {
-            render_sudo_password_dialog(frame, area, password_input, &theme);
         }
         Dialog::ToolNotInstalled { tool_name } => {
             render_tool_not_installed_dialog(frame, area, tool_name, &theme);
@@ -86,7 +88,7 @@ pub fn render(app: &App, frame: &mut Frame) {
 }
 
 /// Render the left column containing ASCII art box and navigation box
-fn render_left_column(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+fn render_left_column(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     // Calculate ASCII art height (lines + border)
     // Calculate ASCII art height (lines + border). If it's too tall for the area, fall back to cat-only ASCII
     let ascii_lines = app.ascii_art.lines().count() as u16;
@@ -126,15 +128,21 @@ fn render_left_column(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 }
 
 /// Render the ASCII art box
-fn render_ascii_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+fn render_ascii_box(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     let accent_color = Theme::from_name(&app.settings.accent_color);
 
     let version_label = format!(" ClumsyCat v{} ", env!("CARGO_PKG_VERSION"));
-    let block = Block::default()
+    let mut block = Block::default()
         .title(version_label)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border_normal));
+
+    if app.proxy_terminal.is_some() {
+        block = block.title_top(
+            Line::from(" [●] proxy ").right_aligned()
+        );
+    }
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -150,11 +158,60 @@ fn render_ascii_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             }
         });
 
-    let text = Paragraph::new(ascii_to_render.as_str())
-        .style(Style::default().fg(accent_color))
-        .alignment(Alignment::Left)
-        .wrap(ratatui::widgets::Wrap { trim: false });
-    frame.render_widget(text, inner);
+    if let Some(ref mut terminal) = app.proxy_terminal {
+        if terminal.visible {
+            // Render terminal instead of ASCII
+            let border_color = if terminal.focused {
+                theme.highlight
+            } else {
+                theme.border_normal
+            };
+
+            let terminal_block = Block::default()
+                .title(" [terminal] enter:focus space:close ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color));
+
+            let terminal_inner = terminal_block.inner(area);
+            frame.render_widget(terminal_block, area);
+
+            // Resize terminal buffer if needed
+            terminal.resize(terminal_inner.width, terminal_inner.height);
+
+            // Render terminal content
+            frame.render_widget(&terminal.buffer, terminal_inner);
+            return;
+        }
+    }
+
+    if app.copilot_proxy_active {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(inner);
+
+        let text = Paragraph::new(ascii_to_render.as_str())
+            .style(Style::default().fg(accent_color))
+            .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(text, chunks[0]);
+
+        let status_text = vec![
+            Line::from(Span::styled("Copilot proxy:", Style::default().fg(accent_color))),
+            Line::from(Span::styled("  Active", Style::default().fg(accent_color))),
+            Line::from(""),
+            Line::from(Span::styled("[c] toggle", Style::default().fg(theme.text_dim))),
+        ];
+        let status = Paragraph::new(status_text).alignment(Alignment::Left);
+        frame.render_widget(status, chunks[1]);
+    } else {
+        let text = Paragraph::new(ascii_to_render.as_str())
+            .style(Style::default().fg(accent_color))
+            .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(text, inner);
+    }
 }
 
 /// Render browser page navigation (favorites/recents for directories)
@@ -167,10 +224,7 @@ fn render_browser_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &T
 
     let block = Block::default()
         .title(" Navigation ")
-        .title(
-            Title::from(" [F]av [R]ec ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [F]av [R]ec ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -267,10 +321,7 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
 
     let block = Block::default()
         .title(" Navigation ")
-        .title(
-            Title::from(" [F]av [R]ec ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [F]av [R]ec ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -357,10 +408,7 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
 
     let block = Block::default()
         .title(" Navigation ")
-        .title(
-            Title::from(" [F]av [R]ec ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [F]av [R]ec ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -447,10 +495,7 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     let block = Block::default()
         .title(" Navigation ")
-        .title(
-            Title::from(" [F]av [R]ec ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [F]av [R]ec ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -538,10 +583,7 @@ fn render_browser_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
     let title_bottom = app.current_dir.to_string_lossy().to_string();
     let block = Block::default()
         .title(" Browser ")
-        .title(
-            Title::from(" [B]rowser ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [B]rowser ").right_aligned())
         .title_bottom(Span::raw(title_bottom))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -662,10 +704,7 @@ fn render_tool_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme: 
 
     let block = Block::default()
         .title(" Select Tool ")
-        .title(
-            Title::from(" [T]ools ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [T]ools ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -715,10 +754,7 @@ fn render_provider_selection_panel(frame: &mut Frame, area: Rect, app: &App, the
 
     let block = Block::default()
         .title(" Select Provider ")
-        .title(
-            Title::from(" [P]rofile ")
-                .alignment(Alignment::Right)
-        )
+        .title_top(Line::from(" [P]rofile ").right_aligned())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -812,6 +848,8 @@ fn render_model_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme:
         return;
     }
 
+    let is_github_profiles = app.selected_provider.as_deref() == Some("GitHub Copilot");
+
     let items: Vec<ListItem> = app
         .models
         .iter()
@@ -825,10 +863,30 @@ fn render_model_selection_panel(frame: &mut Frame, area: Rect, app: &App, theme:
                 theme.text_normal
             };
 
-            ListItem::new(Line::from(vec![
-                Span::raw("> "),
-                Span::raw(model).style(Style::default().fg(color)),
-            ]))
+            if is_github_profiles {
+                let description = match model.as_str() {
+                    "Claude Max" => "highest token usage, best result",
+                    "Claude Pro" => "lower token usage, good results",
+                    "Claude Free" => "no token usage, usable results",
+                    _ => "",
+                };
+
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::raw("> "),
+                        Span::raw(model).style(Style::default().fg(color)),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::raw(description).style(Style::default().fg(theme.text_dim)),
+                    ]),
+                ])
+            } else {
+                ListItem::new(Line::from(vec![
+                    Span::raw("> "),
+                    Span::raw(model).style(Style::default().fg(color)),
+                ]))
+            }
         })
         .collect();
 
@@ -872,13 +930,12 @@ fn get_context_keybinds(app: &App) -> String {
             Dialog::AddToFavorites { .. } => {
                 "w/s navigate  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string()
             }
-            Dialog::SudoPassword { .. } => "enter submit  \u{25CF}  esc cancel".to_string(),
             Dialog::ToolNotInstalled { .. } => "enter dismiss".to_string(),
             Dialog::Error { .. } => "enter dismiss".to_string(),
             Dialog::CustomColorInput { .. } => "type hex code  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string(),
             Dialog::Opening { .. } => "opening...".to_string(),
             Dialog::CommandBar { .. } => "type to search  \u{25CF}  tab autocomplete  \u{25CF}  enter select  \u{25CF}  esc close".to_string(),
-            Dialog::ProviderConfig { .. } => "w/s navigate  \u{25CF}  esc close".to_string(),
+            Dialog::ProviderConfig { .. } => "w/s navigate  \u{25CF}  enter start/stop  \u{25CF}  esc close".to_string(),
             Dialog::KeybindConfig { .. } => "w/s navigate  \u{25CF}  enter edit  \u{25CF}  esc close".to_string(),
             Dialog::EnvConfig { .. } => "w/s navigate  \u{25CF}  tab switch field  \u{25CF}  enter edit  \u{25CF}  esc close".to_string(),
             Dialog::SettingsConfig { .. } => "w/s navigate  \u{25CF}  esc close".to_string(),
@@ -895,22 +952,35 @@ fn get_context_keybinds(app: &App) -> String {
         return "type to search  \u{25CF}  w/s prev/next  \u{25CF}  enter confirm  \u{25CF}  esc cancel".to_string();
     }
 
+    // Handle focused proxy terminal
+    if let Some(ref terminal) = app.proxy_terminal {
+        if terminal.focused {
+            return "space unfocus  \u{25CF}  type input to proxy  \u{25CF}  ctrl+c/d to proxy".to_string();
+        } else if terminal.visible {
+            return "enter focus  \u{25CF}  c hide  \u{25CF}  ctrl+p stop  \u{25CF}  normal navigation".to_string();
+        }
+    }
+
     // Page-specific keybinds (all lowercase, separated by bullet)
     match app.page {
         Page::Browser => {
-            "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+d x2 quit".to_string()
+            if app.proxy_terminal.is_some() {
+                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  c proxy  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+            } else {
+                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
+            }
         }
         Page::ToolSelection => {
-            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Provider => {
-            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+            "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::Model => {
             if app.models_loading {
-                "loading...  \u{25CF}  a back  \u{25CF}  ctrl+d x2 quit".to_string()
+                "loading...  \u{25CF}  a back  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             } else {
-                "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+d x2 quit".to_string()
+                "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  c proxy  \u{25CF}  ctrl+d x2 quit".to_string()
             }
         }
     }
@@ -998,51 +1068,6 @@ fn render_add_favorite_dialog(
         Line::from(""),
         Line::from(Span::styled(
             "[W/S] Navigate  [Enter] Confirm  [Esc] Cancel",
-            Style::default().fg(theme.text_dim),
-        )),
-    ];
-
-    let text = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(text, inner);
-}
-
-/// Render the Sudo Password dialog
-fn render_sudo_password_dialog(frame: &mut Frame, area: Rect, password: &str, theme: &Theme) {
-    render_dialog_background(frame, area);
-
-    let dialog_area = centered_rect(50, 9, area);
-
-    // Clear only the dialog area to remove text behind
-    frame.render_widget(Clear, dialog_area);
-
-    let block = Block::default()
-        .title(" Authentication Required ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.highlight))
-        .style(Style::default().bg(ratatui::style::Color::Black));
-
-    frame.render_widget(&block, dialog_area);
-
-    let inner = block.inner(dialog_area);
-
-    // Show dots for password
-    let dots = "*".repeat(password.len());
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Enter sudo password:",
-            Style::default().fg(theme.text_normal),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("[{}]", if dots.is_empty() { " " } else { &dots }),
-            Style::default().fg(theme.highlight),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "[Enter] Submit  [Esc] Cancel",
             Style::default().fg(theme.text_dim),
         )),
     ];
@@ -1665,5 +1690,80 @@ fn render_settings_config(
     frame.render_widget(
         Paragraph::new(hint).alignment(Alignment::Center),
         Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+    );
+}
+
+fn render_global_config_overlay(app: &App, frame: &mut Frame) {
+    let area = frame.area();
+    let accent = Theme::from_name(&app.settings.accent_color);
+
+    let overlay_width = area.width / 2;
+    let overlay_height = (area.height * 2) / 5;
+    let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+    let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
+
+    let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .border_type(BorderType::Rounded)
+        .title(" global config switcher ")
+        .title_style(Style::default().fg(accent).add_modifier(Modifier::BOLD));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let profiles = ["claude max", "claude pro", "claude free"];
+    let descriptions = [
+        "opus 4.5 | sonnet 4.5 | haiku 4.5",
+        "opus 4.5 | sonnet 4.5 | haiku gpt-5-mini",
+        "sonnet gpt-5-mini",
+    ];
+
+    let content_area = Rect::new(
+        inner.x + 2,
+        inner.y + 1,
+        inner.width.saturating_sub(4),
+        inner.height.saturating_sub(3),
+    );
+
+    for (i, (profile, desc)) in profiles.iter().zip(descriptions.iter()).enumerate() {
+        let y = content_area.y + (i as u16 * 3);
+        if y + 2 >= content_area.y + content_area.height {
+            break;
+        }
+
+        let is_selected = i == app.global_config_selection;
+        let (prefix, style) = if is_selected {
+            ("> ", Style::default().fg(accent).add_modifier(Modifier::BOLD))
+        } else {
+            ("  ", Style::default().fg(Color::Gray))
+        };
+
+        let profile_text = format!("{}{}", prefix, profile);
+        let profile_para = Paragraph::new(profile_text).style(style);
+        frame.render_widget(
+            profile_para,
+            Rect::new(content_area.x, y, content_area.width, 1),
+        );
+
+        let desc_para = Paragraph::new(*desc).style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(
+            desc_para,
+            Rect::new(content_area.x + 2, y + 1, content_area.width, 1),
+        );
+    }
+
+    let footer_y = inner.y + inner.height.saturating_sub(1);
+    let footer_text = "[w/s] navigate  [enter] apply  [esc] cancel";
+    let footer = Paragraph::new(footer_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(
+        footer,
+        Rect::new(inner.x, footer_y, inner.width, 1),
     );
 }
