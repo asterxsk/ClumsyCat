@@ -538,6 +538,16 @@ impl App {
                         }
                     }
 
+                    // Handle global config overlay input
+                    if self.global_config_open {
+                        let is_ctrl_d = matches!(code, KeyCode::Char('d') | KeyCode::Char('D'))
+                            && key.modifiers.contains(KeyModifiers::CONTROL);
+                        if !is_ctrl_d {
+                            self.handle_global_config_input(code);
+                            continue;
+                        }
+                    }
+
                     // Handle search mode input
                     if self.search_mode.is_active() {
                         // Allow control key combinations to pass through
