@@ -86,7 +86,7 @@ pub const COMMANDS: &[Command] = &[
         description: "Open settings",
     },
     Command {
-        name: "globalconf",
+        name: "globalprofileconf",
         description: "switch claude code model configuration",
     },
 ];
@@ -174,6 +174,7 @@ pub struct App {
     // Copilot proxy state
     pub copilot_proxy_active: bool,
     pub copilot_proxy_last_check: Instant,
+    pub copilot_proxy_pid: Option<u32>,
 
     // Embedded proxy terminal
     pub proxy_terminal: Option<ProxyTerminal>,
@@ -338,6 +339,7 @@ impl App {
             // Copilot proxy state
             copilot_proxy_active: tools::check_copilot_proxy_running(),
             copilot_proxy_last_check: Instant::now(),
+            copilot_proxy_pid: None,
 
             // Embedded proxy terminal
             proxy_terminal: None,
@@ -1827,6 +1829,17 @@ impl App {
         terminal.draw(|frame| crate::ui::render(self, frame)).ok();
         std::thread::sleep(std::time::Duration::from_millis(150));
 
+        // Start copilot-api proxy if launching Claude Code with GitHub Copilot
+        let is_claude = tool_info.display_name == "Claude Code";
+        let using_copilot = self.selected_provider.as_deref() == Some("GitHub Copilot");
+        if is_claude && using_copilot {
+            if let Some(pid) = tools::start_copilot_proxy() {
+                self.copilot_proxy_pid = Some(pid);
+                self.copilot_proxy_active = true;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
+
         tools::prepare_for_launch(&tool_name);
         let result = tools::launch_tool(
             tool_info,
@@ -1837,6 +1850,12 @@ impl App {
                 .map(|s| s.as_str()),
         );
         tools::restore_after_launch();
+
+        // Kill copilot-api proxy after Claude exits
+        if let Some(pid) = self.copilot_proxy_pid.take() {
+            tools::stop_copilot_proxy(pid);
+            self.copilot_proxy_active = false;
+        }
 
         // Clear the dialog after launch
         self.dialog = Dialog::None;
@@ -2215,7 +2234,7 @@ impl App {
                 self.dialog = Dialog::SettingsConfig { selected_index: 0 };
             }
             4 => {
-                // globalconf
+                // globalprofileconf
                 self.global_config_open = true;
                 self.global_config_selection = 0;
             }
