@@ -114,6 +114,7 @@ pub struct App {
     pub settings: Settings,
     pub ascii_art: String,
     pub default_mode: bool, // true when launched with --default flag
+    pub proxy_auto_start: bool,  // true when proxy should auto-start in default mode
 
     // Page 1: Browser state
     pub current_dir: PathBuf,
@@ -2172,10 +2173,7 @@ impl App {
 
     /// Open the command bar dialog
     fn open_command_bar(&mut self) {
-        use crate::search::filter_commands_fuzzy;
-
-        let filtered =
-            filter_commands_fuzzy(COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)), "");
+        let filtered: Vec<(usize, i32)> = (0..COMMANDS.len()).map(|i| (i, 0)).collect();
         self.dialog = Dialog::CommandBar {
             query: String::new(),
             filtered_indices: filtered,
@@ -2185,16 +2183,25 @@ impl App {
 
     /// Filter commands based on current query
     fn filter_commands(&mut self) {
-        use crate::search::filter_commands_fuzzy;
-
         if let Dialog::CommandBar {
             query,
             filtered_indices,
             selected_index,
         } = &mut self.dialog
         {
-            let filtered =
-                filter_commands_fuzzy(COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)), query);
+            let query_lower = query.to_lowercase();
+            let filtered: Vec<(usize, i32)> = COMMANDS
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, cmd)| {
+                    if cmd.name.to_lowercase().contains(&query_lower) {
+                        Some((idx, 0))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             *filtered_indices = filtered;
             *selected_index = 0;
 
