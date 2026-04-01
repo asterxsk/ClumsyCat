@@ -92,7 +92,40 @@ impl ClaudeSettings {
         }
     }
 
+    pub fn set_model_profile(&mut self, profile: ModelProfile) {
+        if !self.raw.is_object() {
+            self.raw = serde_json::json!({});
+        }
+
+        let env_vars = profile.env_vars();
+
+        if self.raw.get("env").is_none() {
+            let default_env = serde_json::json!({
+                "ANTHROPIC_BASE_URL": "http://localhost:4141",
+                "ANTHROPIC_AUTH_TOKEN": "sk-dummy",
+                "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+            });
+            self.raw["env"] = default_env;
+        }
+
+        let env_obj = self.raw["env"].as_object_mut().unwrap();
+
+        for (key, value) in env_vars {
+            env_obj.insert(key, Value::String(value));
+        }
+    }
+
     pub fn save(&self) -> Result<(), io::Error> {
+        let json = serde_json::to_string_pretty(&self.raw)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        let temp_path = self.path.with_extension("json.tmp");
+        fs::write(&temp_path, json)?;
+
+        fs::rename(&temp_path, &self.path)?;
+
         Ok(())
     }
 }
@@ -160,6 +193,87 @@ mod tests {
         let settings = ClaudeSettings::load_from_path(&test_file).unwrap();
         assert!(settings.raw.is_object());
         assert!(settings.raw.get("env").is_some());
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_set_model_profile_updates_env() {
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_settings_update.json");
+
+        let content = r#"{"env":{"ANTHROPIC_MODEL":"old-model"},"other":"preserved"}"#;
+        let mut file = fs::File::create(&test_file).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let mut settings = ClaudeSettings::load_from_path(&test_file).unwrap();
+        settings.set_model_profile(ModelProfile::ClaudePro);
+
+        assert_eq!(settings.raw["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "claude-opus-4.5");
+        assert_eq!(settings.raw["env"]["ANTHROPIC_MODEL"], "claude-sonnet-4.5");
+        assert_eq!(settings.raw["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "gpt-5-mini");
+        assert_eq!(settings.raw["other"], "preserved");
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_set_model_profile_creates_env_if_missing() {
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_settings_no_env.json");
+
+        let content = r#"{"other":"data"}"#;
+        let mut file = fs::File::create(&test_file).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let mut settings = ClaudeSettings::load_from_path(&test_file).unwrap();
+        settings.set_model_profile(ModelProfile::ClaudeMax);
+
+        assert!(settings.raw.get("env").is_some());
+        assert_eq!(settings.raw["env"]["ANTHROPIC_MODEL"], "claude-sonnet-4.5");
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_save_writes_json() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_settings_save.json");
+
+        fs::remove_file(&test_file).ok();
+
+        let mut settings = ClaudeSettings::load_from_path(&test_file).unwrap();
+        settings.set_model_profile(ModelProfile::ClaudeFree);
+        settings.save().unwrap();
+
+        assert!(test_file.exists());
+
+        let content = fs::read_to_string(&test_file).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["env"]["ANTHROPIC_MODEL"], "gpt-5-mini");
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_save_is_atomic() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_settings_atomic.json");
+
+        let initial = r#"{"env":{"key":"value"}}"#;
+        fs::write(&test_file, initial).unwrap();
+
+        let mut settings = ClaudeSettings::load_from_path(&test_file).unwrap();
+        settings.set_model_profile(ModelProfile::ClaudeMax);
+        settings.save().unwrap();
+
+        let content = fs::read_to_string(&test_file).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed.is_object());
 
         fs::remove_file(&test_file).ok();
     }
