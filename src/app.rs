@@ -1,5 +1,5 @@
-use crate::config::{Config, Settings};
 use crate::claude_config::{ClaudeSettings, ModelProfile};
+use crate::config::{Config, Settings};
 use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
 use crate::terminal::ProxyTerminal;
@@ -69,11 +69,26 @@ pub struct Command {
 
 /// Available commands in the command bar
 pub const COMMANDS: &[Command] = &[
-    Command { name: "providerconf", description: "Edit provider configurations" },
-    Command { name: "keybindconf", description: "Customize keybindings" },
-    Command { name: "env", description: "Manage environment variables" },
-    Command { name: "settings", description: "Open settings" },
-    Command { name: "globalconf", description: "switch claude code model configuration" },
+    Command {
+        name: "providerconf",
+        description: "Edit provider configurations",
+    },
+    Command {
+        name: "keybindconf",
+        description: "Customize keybindings",
+    },
+    Command {
+        name: "env",
+        description: "Manage environment variables",
+    },
+    Command {
+        name: "settings",
+        description: "Open settings",
+    },
+    Command {
+        name: "globalconf",
+        description: "switch claude code model configuration",
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,10 +110,10 @@ pub struct App {
     pub page: Page,
     pub dialog: Dialog,
     pub search_mode: SearchMode,
-    pub search_typing_mode: bool,  // true when in typing mode, false when in navigation mode
+    pub search_typing_mode: bool, // true when in typing mode, false when in navigation mode
     pub settings: Settings,
     pub ascii_art: String,
-    pub default_mode: bool,  // true when launched with --default flag
+    pub default_mode: bool, // true when launched with --default flag
 
     // Page 1: Browser state
     pub current_dir: PathBuf,
@@ -173,17 +188,21 @@ impl App {
         let config = Config::load();
 
         // Load ASCII art from file
-        let ascii_art = std::fs::read_to_string("ascii.md")
-            .unwrap_or_else(|_| "CLUMSY CAT".to_string());
+        let ascii_art =
+            std::fs::read_to_string("ascii.md").unwrap_or_else(|_| "CLUMSY CAT".to_string());
 
         let current_dir = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 #[cfg(windows)]
-                { PathBuf::from("C:\\") }
+                {
+                    PathBuf::from("C:\\")
+                }
                 #[cfg(not(windows))]
-                { PathBuf::from("/") }
+                {
+                    PathBuf::from("/")
+                }
             });
 
         let dir_entries = load_dir_entries(&current_dir);
@@ -220,11 +239,7 @@ impl App {
             .map(|v| v.iter().map(PathBuf::from).collect())
             .unwrap_or_default();
 
-        let favorites_tools = config
-            .favorites
-            .get("tools")
-            .cloned()
-            .unwrap_or_default();
+        let favorites_tools = config.favorites.get("tools").cloned().unwrap_or_default();
 
         let recents_tools = config.recents.get("tools").cloned().unwrap_or_default();
 
@@ -234,17 +249,9 @@ impl App {
             .cloned()
             .unwrap_or_default();
 
-        let recents_providers = config
-            .recents
-            .get("providers")
-            .cloned()
-            .unwrap_or_default();
+        let recents_providers = config.recents.get("providers").cloned().unwrap_or_default();
 
-        let favorites_models = config
-            .favorites
-            .get("models")
-            .cloned()
-            .unwrap_or_default();
+        let favorites_models = config.favorites.get("models").cloned().unwrap_or_default();
 
         let recents_models = config.recents.get("models").cloned().unwrap_or_default();
 
@@ -257,8 +264,7 @@ impl App {
         // Determine starting page and pre-selections based on default_mode
         let (page, selected_tool, selected_provider) = if default_mode {
             // Pre-select Claude Code and GitHub Copilot
-            let tool = find_tool_by_display_name("Claude Code")
-                .map(|t| t.display_name.to_string());
+            let tool = find_tool_by_display_name("Claude Code").map(|t| t.display_name.to_string());
             let provider = Some("GitHub Copilot".to_string());
             (Page::Browser, tool, provider)
         } else {
@@ -440,8 +446,8 @@ impl App {
                 KeyCode::Char(c) => {
                     if modifiers.contains(KeyModifiers::CONTROL) {
                         match c.to_ascii_lowercase() {
-                            'c' => vec![3], // Ctrl+C
-                            'd' => vec![4], // Ctrl+D
+                            'c' => vec![3],  // Ctrl+C
+                            'd' => vec![4],  // Ctrl+D
                             'z' => vec![26], // Ctrl+Z
                             _ => vec![c as u8],
                         }
@@ -475,8 +481,11 @@ impl App {
         }
     }
 
-    pub fn run(&mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<(), Box<dyn std::error::Error>> {
-        use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
+    pub fn run(
+        &mut self,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
         loop {
             // Update proxy buffer on each frame
@@ -520,7 +529,7 @@ impl App {
                     if let Some(ref mut proxy) = self.proxy_terminal {
                         if proxy.focused {
                             if code == KeyCode::Char(' ') {
-                                proxy.focused = false;  // Space unfocuses
+                                proxy.focused = false; // Space unfocuses
                             } else {
                                 self.forward_to_proxy(code, key.modifiers);
                             }
@@ -644,7 +653,9 @@ impl App {
                     // Normal mode input handling
                     match code {
                         // Proxy controls
-                        KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('p') | KeyCode::Char('P')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             if self.proxy_terminal.is_some() {
                                 self.stop_proxy();
                             } else {
@@ -667,17 +678,23 @@ impl App {
                                 self.handle_select(terminal);
                             }
                         }
-                        KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('d') | KeyCode::Char('D')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             if self.handle_ctrl_d() {
                                 break; // Exit the event loop
                             }
                         }
-                        KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('f') | KeyCode::Char('F')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
                             self.open_add_favorite_dialog();
                         }
-                        KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('s') | KeyCode::Char('S')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
                             self.settings_open = true;
@@ -687,30 +704,64 @@ impl App {
                         KeyCode::Char('r') | KeyCode::Char('R') => {
                             self.active_panel = ActivePanel::Left;
                             match self.page {
-                                Page::Browser => { self.left_section = LeftSection::Recents; self.selected_index = 0; }
-                                Page::ToolSelection => { self.tool_left_section = LeftSection::Recents; self.selected_tool_index = 0; }
-                                Page::Provider => { self.provider_left_section = LeftSection::Recents; self.selected_provider_index = 0; }
-                                Page::Model => { self.model_left_section = LeftSection::Recents; self.selected_model_index = 0; }
+                                Page::Browser => {
+                                    self.left_section = LeftSection::Recents;
+                                    self.selected_index = 0;
+                                }
+                                Page::ToolSelection => {
+                                    self.tool_left_section = LeftSection::Recents;
+                                    self.selected_tool_index = 0;
+                                }
+                                Page::Provider => {
+                                    self.provider_left_section = LeftSection::Recents;
+                                    self.selected_provider_index = 0;
+                                }
+                                Page::Model => {
+                                    self.model_left_section = LeftSection::Recents;
+                                    self.selected_model_index = 0;
+                                }
                             }
                         }
                         // Global hotkey: F - Switch left panel to Favorites and focus it
-                        KeyCode::Char('f') | KeyCode::Char('F') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('f') | KeyCode::Char('F')
+                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             self.active_panel = ActivePanel::Left;
                             match self.page {
-                                Page::Browser => { self.left_section = LeftSection::Favorites; self.selected_index = 0; }
-                                Page::ToolSelection => { self.tool_left_section = LeftSection::Favorites; self.selected_tool_index = 0; }
-                                Page::Provider => { self.provider_left_section = LeftSection::Favorites; self.selected_provider_index = 0; }
-                                Page::Model => { self.model_left_section = LeftSection::Favorites; self.selected_model_index = 0; }
+                                Page::Browser => {
+                                    self.left_section = LeftSection::Favorites;
+                                    self.selected_index = 0;
+                                }
+                                Page::ToolSelection => {
+                                    self.tool_left_section = LeftSection::Favorites;
+                                    self.selected_tool_index = 0;
+                                }
+                                Page::Provider => {
+                                    self.provider_left_section = LeftSection::Favorites;
+                                    self.selected_provider_index = 0;
+                                }
+                                Page::Model => {
+                                    self.model_left_section = LeftSection::Favorites;
+                                    self.selected_model_index = 0;
+                                }
                             }
                         }
                         // Global hotkey: B - Switch focus to Browser (right panel)
                         KeyCode::Char('b') | KeyCode::Char('B') => {
                             self.active_panel = ActivePanel::Right;
                             match self.page {
-                                Page::Browser => { self.selected_index = 0; }
-                                Page::ToolSelection => { self.selected_tool_index = 0; }
-                                Page::Provider => { self.selected_provider_index = 0; }
-                                Page::Model => { self.selected_model_index = 0; }
+                                Page::Browser => {
+                                    self.selected_index = 0;
+                                }
+                                Page::ToolSelection => {
+                                    self.selected_tool_index = 0;
+                                }
+                                Page::Provider => {
+                                    self.selected_provider_index = 0;
+                                }
+                                Page::Model => {
+                                    self.selected_model_index = 0;
+                                }
                             }
                         }
                         // Global hotkey: T - Switch focus to Tools (right panel on ToolSelection page)
@@ -744,7 +795,7 @@ impl App {
                         }
                         // Global hotkey: c - Toggle Copilot proxy visibility or interactive login
                         KeyCode::Char('c') => {
-                            if let Some(_) = self.proxy_terminal {
+                            if self.proxy_terminal.is_some() {
                                 self.toggle_proxy_visible();
                             } else if self.copilot_proxy_active {
                                 self.stop_copilot_proxy();
@@ -848,7 +899,10 @@ impl App {
     }
 
     /// Map vim keys (k/j/h/l) to navigation keys when in vim mode
-    fn map_vim_key(&self, code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyCode {
+    fn map_vim_key(
+        &self,
+        code: ratatui::crossterm::event::KeyCode,
+    ) -> ratatui::crossterm::event::KeyCode {
         use ratatui::crossterm::event::KeyCode;
 
         // Use custom keybinds for mapping
@@ -862,43 +916,45 @@ impl App {
     }
 
     /// Handle input when a dialog is open
-    fn handle_dialog_input(&mut self, code: ratatui::crossterm::event::KeyCode, modifiers: ratatui::crossterm::event::KeyModifiers) {
+    fn handle_dialog_input(
+        &mut self,
+        code: ratatui::crossterm::event::KeyCode,
+        modifiers: ratatui::crossterm::event::KeyModifiers,
+    ) {
         use ratatui::crossterm::event::KeyCode;
         use ratatui::crossterm::event::KeyModifiers;
 
         match &mut self.dialog {
             Dialog::None => {}
-            Dialog::AddToFavorites { path } => {
-                match code {
-                    KeyCode::Esc => {
-                        self.dialog = Dialog::None;
-                        self.dialog_selection = 0;
-                    }
-                    KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Up => {
-                        if self.dialog_selection > 0 {
-                            self.dialog_selection -= 1;
-                        }
-                    }
-                    KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
-                        if self.dialog_selection < 1 {
-                            self.dialog_selection += 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        let path_to_add = if self.dialog_selection == 0 {
-                            path.clone()
-                        } else {
-                            path.parent()
-                                .map(|p| p.to_path_buf())
-                                .unwrap_or_else(|| PathBuf::from("/"))
-                        };
-                        self.add_to_favorites(path_to_add);
-                        self.dialog = Dialog::None;
-                        self.dialog_selection = 0;
-                    }
-                    _ => {}
+            Dialog::AddToFavorites { path } => match code {
+                KeyCode::Esc => {
+                    self.dialog = Dialog::None;
+                    self.dialog_selection = 0;
                 }
-            }
+                KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Up => {
+                    if self.dialog_selection > 0 {
+                        self.dialog_selection -= 1;
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
+                    if self.dialog_selection < 1 {
+                        self.dialog_selection += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    let path_to_add = if self.dialog_selection == 0 {
+                        path.clone()
+                    } else {
+                        path.parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| PathBuf::from("/"))
+                    };
+                    self.add_to_favorites(path_to_add);
+                    self.dialog = Dialog::None;
+                    self.dialog_selection = 0;
+                }
+                _ => {}
+            },
             Dialog::CustomColorInput { hex_input } => {
                 match code {
                     KeyCode::Esc => {
@@ -917,21 +973,21 @@ impl App {
                         hex_input.pop();
                     }
                     KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                        if hex_input.len() < 7 && (c.is_ascii_hexdigit() || (c == '#' && hex_input.is_empty())) {
+                        if hex_input.len() < 7
+                            && (c.is_ascii_hexdigit() || (c == '#' && hex_input.is_empty()))
+                        {
                             hex_input.push(c.to_ascii_uppercase());
                         }
                     }
                     _ => {}
                 }
             }
-            Dialog::ToolNotInstalled { .. } | Dialog::Error { .. } => {
-                match code {
-                    KeyCode::Esc | KeyCode::Enter => {
-                        self.dialog = Dialog::None;
-                    }
-                    _ => {}
+            Dialog::ToolNotInstalled { .. } | Dialog::Error { .. } => match code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.dialog = Dialog::None;
                 }
-            }
+                _ => {}
+            },
             Dialog::Opening { .. } => {
                 // Allow user to dismiss the opening overlay with Esc or Enter
                 match code {
@@ -941,73 +997,78 @@ impl App {
                     _ => {}
                 }
             }
-            Dialog::CommandBar { query, filtered_indices, selected_index } => {
-                match code {
-                    KeyCode::Esc => {
-                        self.dialog = Dialog::None;
-                    }
-                    KeyCode::Enter => {
-                        if let Some(&(cmd_idx, _)) = filtered_indices.get(*selected_index) {
-                            self.execute_command(cmd_idx);
-                        }
-                    }
-                    KeyCode::Tab => {
-                        if let Some(&(cmd_idx, _)) = filtered_indices.get(*selected_index) {
-                            *query = COMMANDS[cmd_idx].name.to_string();
-                            self.filter_commands();
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => {
-                        if !filtered_indices.is_empty() {
-                            if *selected_index > 0 {
-                                *selected_index -= 1;
-                            } else if !filtered_indices.is_empty() {
-                                *selected_index = filtered_indices.len().saturating_sub(1);
-                            }
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => {
-                        if !filtered_indices.is_empty() {
-                            *selected_index = (*selected_index + 1) % filtered_indices.len();
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        query.pop();
-                        self.filter_commands();
-                    }
-                    KeyCode::Char(c) if c.is_ascii_lowercase() && !modifiers.contains(KeyModifiers::CONTROL) => {
-                        query.push(c);
-                        self.filter_commands();
-                    }
-                    _ => {}
+            Dialog::CommandBar {
+                query,
+                filtered_indices,
+                selected_index,
+            } => match code {
+                KeyCode::Esc => {
+                    self.dialog = Dialog::None;
                 }
-            }
-            Dialog::ProviderConfig { selected_index } => {
-                match code {
-                    KeyCode::Enter => {
-                        let provider = PROVIDERS[*selected_index];
-                        if provider == "GitHub Copilot" {
-                            self.dialog = Dialog::None;
-                            self.pending_copilot_login = true;
-                        } else {
-                            self.dialog = Dialog::None;
-                        }
+                KeyCode::Enter => {
+                    if let Some(&(cmd_idx, _)) = filtered_indices.get(*selected_index) {
+                        self.execute_command(cmd_idx);
                     }
-                    KeyCode::Esc => self.dialog = Dialog::None,
-                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => {
+                }
+                KeyCode::Tab => {
+                    if let Some(&(cmd_idx, _)) = filtered_indices.get(*selected_index) {
+                        *query = COMMANDS[cmd_idx].name.to_string();
+                        self.filter_commands();
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => {
+                    if !filtered_indices.is_empty() {
                         if *selected_index > 0 {
                             *selected_index -= 1;
-                        } else {
-                            *selected_index = PROVIDERS.len() - 1;
+                        } else if !filtered_indices.is_empty() {
+                            *selected_index = filtered_indices.len().saturating_sub(1);
                         }
                     }
-                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => {
-                        *selected_index = (*selected_index + 1) % PROVIDERS.len();
-                    }
-                    _ => {}
                 }
-            }
-            Dialog::KeybindConfig { selected_index, editing_field } => {
+                KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => {
+                    if !filtered_indices.is_empty() {
+                        *selected_index = (*selected_index + 1) % filtered_indices.len();
+                    }
+                }
+                KeyCode::Backspace => {
+                    query.pop();
+                    self.filter_commands();
+                }
+                KeyCode::Char(c)
+                    if c.is_ascii_lowercase() && !modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    query.push(c);
+                    self.filter_commands();
+                }
+                _ => {}
+            },
+            Dialog::ProviderConfig { selected_index } => match code {
+                KeyCode::Enter => {
+                    let provider = PROVIDERS[*selected_index];
+                    if provider == "GitHub Copilot" {
+                        self.dialog = Dialog::None;
+                        self.pending_copilot_login = true;
+                    } else {
+                        self.dialog = Dialog::None;
+                    }
+                }
+                KeyCode::Esc => self.dialog = Dialog::None,
+                KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => {
+                    if *selected_index > 0 {
+                        *selected_index -= 1;
+                    } else {
+                        *selected_index = PROVIDERS.len() - 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => {
+                    *selected_index = (*selected_index + 1) % PROVIDERS.len();
+                }
+                _ => {}
+            },
+            Dialog::KeybindConfig {
+                selected_index,
+                editing_field,
+            } => {
                 match code {
                     KeyCode::Esc => {
                         if editing_field.is_some() {
@@ -1016,14 +1077,18 @@ impl App {
                             self.dialog = Dialog::None;
                         }
                     }
-                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') if editing_field.is_none() => {
+                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W')
+                        if editing_field.is_none() =>
+                    {
                         if *selected_index > 0 {
                             *selected_index -= 1;
                         } else {
                             *selected_index = 4; // 5 items: up, down, left, right, preset
                         }
                     }
-                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') if editing_field.is_none() => {
+                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S')
+                        if editing_field.is_none() =>
+                    {
                         *selected_index = (*selected_index + 1) % 5;
                     }
                     KeyCode::Enter if editing_field.is_none() => {
@@ -1046,7 +1111,12 @@ impl App {
                     _ => {}
                 }
             }
-            Dialog::EnvConfig { entries, selected_index, editing_field, input_buffer } => {
+            Dialog::EnvConfig {
+                entries,
+                selected_index,
+                editing_field,
+                input_buffer,
+            } => {
                 match code {
                     KeyCode::Esc => {
                         if editing_field.is_some() {
@@ -1056,7 +1126,9 @@ impl App {
                             self.dialog = Dialog::None;
                         }
                     }
-                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') if editing_field.is_none() => {
+                    KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W')
+                        if editing_field.is_none() =>
+                    {
                         let total = entries.len() + 1; // +1 for "add new"
                         if *selected_index > 0 {
                             *selected_index -= 1;
@@ -1064,7 +1136,9 @@ impl App {
                             *selected_index = total - 1;
                         }
                     }
-                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') if editing_field.is_none() => {
+                    KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S')
+                        if editing_field.is_none() =>
+                    {
                         let total = entries.len() + 1; // +1 for "add new"
                         *selected_index = (*selected_index + 1) % total;
                     }
@@ -1097,7 +1171,10 @@ impl App {
                     KeyCode::Backspace if editing_field.is_some() => {
                         input_buffer.pop();
                     }
-                    KeyCode::Char(c) if editing_field.is_some() && !modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char(c)
+                        if editing_field.is_some()
+                            && !modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
                         input_buffer.push(c);
                     }
                     _ => {}
@@ -1130,7 +1207,8 @@ impl App {
         let mut nav_modes = vec!["wasd", "vim"];
 
         // Add custom presets to nav modes
-        let custom_preset_names: Vec<String> = self.settings.custom_presets.keys().cloned().collect();
+        let custom_preset_names: Vec<String> =
+            self.settings.custom_presets.keys().cloned().collect();
         for preset_name in &custom_preset_names {
             nav_modes.push(preset_name);
         }
@@ -1154,7 +1232,8 @@ impl App {
             KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
                 self.quit_confirm = 0;
                 self.quit_timer = None;
-                if self.settings_selection < 1 { // 2 settings (color, nav_mode)
+                if self.settings_selection < 1 {
+                    // 2 settings (color, nav_mode)
                     self.settings_selection += 1;
                 }
             }
@@ -1307,7 +1386,9 @@ impl App {
     fn open_add_favorite_dialog(&mut self) {
         let path = match self.page {
             Page::Browser => {
-                if self.active_panel == ActivePanel::Right && self.selected_index < self.entries.len() {
+                if self.active_panel == ActivePanel::Right
+                    && self.selected_index < self.entries.len()
+                {
                     self.entries[self.selected_index].path.clone()
                 } else {
                     self.current_dir.clone()
@@ -1322,38 +1403,43 @@ impl App {
 
     /// Add a path to favorites
     fn add_to_favorites(&mut self, path: PathBuf) {
-        match self.page {
-            Page::Browser => {
-                if !self.favorites_dirs.contains(&path) {
-                    self.favorites_dirs.push(path.clone());
-                    // Update config and save
-                    let dirs: Vec<String> = self.favorites_dirs.iter()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .collect();
-                    self.config.favorites.insert("dirs".to_string(), dirs);
-                    let _ = self.config.save();
-                }
-            }
-            _ => {}
+        if matches!(self.page, Page::Browser) && !self.favorites_dirs.contains(&path) {
+            self.favorites_dirs.push(path.clone());
+            // Update config and save
+            let dirs: Vec<String> = self
+                .favorites_dirs
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            self.config.favorites.insert("dirs".to_string(), dirs);
+            let _ = self.config.save();
         }
     }
 
     /// Save all recents to config and persist to disk
     fn save_recents_to_config(&mut self) {
         // Save dirs
-        let dirs: Vec<String> = self.recents_dirs.iter()
+        let dirs: Vec<String> = self
+            .recents_dirs
+            .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         self.config.recents.insert("dirs".to_string(), dirs);
 
         // Save tools
-        self.config.recents.insert("tools".to_string(), self.recents_tools.clone());
+        self.config
+            .recents
+            .insert("tools".to_string(), self.recents_tools.clone());
 
         // Save providers
-        self.config.recents.insert("providers".to_string(), self.recents_providers.clone());
+        self.config
+            .recents
+            .insert("providers".to_string(), self.recents_providers.clone());
 
         // Save models
-        self.config.recents.insert("models".to_string(), self.recents_models.clone());
+        self.config
+            .recents
+            .insert("models".to_string(), self.recents_models.clone());
 
         // Save config to disk
         let _ = self.config.save();
@@ -1531,7 +1617,9 @@ impl App {
     fn handle_open(&mut self, terminal: &mut ratatui::DefaultTerminal) {
         match self.page {
             Page::Browser => {
-                if self.active_panel == ActivePanel::Right && self.selected_index < self.entries.len() {
+                if self.active_panel == ActivePanel::Right
+                    && self.selected_index < self.entries.len()
+                {
                     let entry = &self.entries[self.selected_index];
                     if entry.is_dir {
                         let path = entry.path.clone();
@@ -1744,7 +1832,9 @@ impl App {
             tool_info,
             &dir,
             self.selected_provider.as_deref(),
-            self.models.get(self.selected_model_index).map(|s| s.as_str()),
+            self.models
+                .get(self.selected_model_index)
+                .map(|s| s.as_str()),
         );
         tools::restore_after_launch();
 
@@ -1760,9 +1850,7 @@ impl App {
         terminal.draw(|frame| crate::ui::render(self, frame)).ok();
 
         match result {
-            LaunchResult::Success => {
-                true
-            }
+            LaunchResult::Success => true,
             LaunchResult::ToolNotInstalled(name) => {
                 self.dialog = Dialog::ToolNotInstalled { tool_name: name };
                 false
@@ -1837,7 +1925,7 @@ impl App {
         #[cfg(not(any(unix, windows)))]
         let result: Result<std::process::ExitStatus, std::io::Error> = Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "Platform not supported"
+            "Platform not supported",
         ));
 
         match result {
@@ -1936,7 +2024,7 @@ impl App {
             filtered_indices: (0..names.len()).collect(), // All items initially
             current_match_index: 0,
         };
-        self.search_typing_mode = true;  // Start in typing mode
+        self.search_typing_mode = true; // Start in typing mode
     }
 
     /// Update the search query with a new character
@@ -2031,7 +2119,6 @@ impl App {
         }
     }
 
-
     /// Get the names of items in the current list view
     fn get_current_list_names(&self) -> Vec<String> {
         match self.page {
@@ -2068,10 +2155,8 @@ impl App {
     fn open_command_bar(&mut self) {
         use crate::search::filter_commands_fuzzy;
 
-        let filtered = filter_commands_fuzzy(
-            COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)),
-            "",
-        );
+        let filtered =
+            filter_commands_fuzzy(COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)), "");
         self.dialog = Dialog::CommandBar {
             query: String::new(),
             filtered_indices: filtered,
@@ -2083,11 +2168,14 @@ impl App {
     fn filter_commands(&mut self) {
         use crate::search::filter_commands_fuzzy;
 
-        if let Dialog::CommandBar { query, filtered_indices, selected_index } = &mut self.dialog {
-            let filtered = filter_commands_fuzzy(
-                COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)),
-                query,
-            );
+        if let Dialog::CommandBar {
+            query,
+            filtered_indices,
+            selected_index,
+        } = &mut self.dialog
+        {
+            let filtered =
+                filter_commands_fuzzy(COMMANDS.iter().enumerate().map(|(i, c)| (i, c.name)), query);
             *filtered_indices = filtered;
             *selected_index = 0;
 

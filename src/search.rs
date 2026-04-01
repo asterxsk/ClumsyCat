@@ -44,6 +44,7 @@ impl SearchMode {
     }
 
     /// Get the current query string, if active
+    #[allow(dead_code)]
     pub fn query(&self) -> Option<&str> {
         match self {
             SearchMode::Active { query, .. } => Some(query.as_str()),

@@ -3,17 +3,57 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Keybinds {
+    pub up: String,
+    pub down: String,
+    pub left: String,
+    pub right: String,
+}
+
+impl Default for Keybinds {
+    fn default() -> Self {
+        Self {
+            up: "w".to_string(),
+            down: "s".to_string(),
+            left: "a".to_string(),
+            right: "d".to_string(),
+        }
+    }
+}
+
+impl Keybinds {
+    pub fn vim_preset() -> Self {
+        Self {
+            up: "k".to_string(),
+            down: "j".to_string(),
+            left: "h".to_string(),
+            right: "l".to_string(),
+        }
+    }
+
+    pub fn wasd_preset() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub accent_color: String,
     pub nav_mode: String,
+    pub custom_color_hex: String, // Store custom HEX color
+    pub keybinds: Keybinds,
+    pub custom_presets: HashMap<String, Keybinds>, // Store custom keybind presets
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             accent_color: "orange".to_string(),
-            nav_mode: "arrow".to_string(),
+            nav_mode: "wasd".to_string(),
+            custom_color_hex: "#FF6600".to_string(), // Default orange hex
+            keybinds: Keybinds::default(),
+            custom_presets: HashMap::new(),
         }
     }
 }
@@ -103,7 +143,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.settings.accent_color, "orange");
-        assert_eq!(config.settings.nav_mode, "arrow");
+        assert_eq!(config.settings.nav_mode, "wasd");
         assert!(config.favorites.contains_key("dirs"));
         assert!(config.favorites.contains_key("tools"));
         assert!(config.recents.contains_key("dirs"));
@@ -115,6 +155,9 @@ mod tests {
         let config = Config::default();
         let json = serde_json::to_string(&config).expect("Failed to serialize");
         let deserialized: Config = serde_json::from_str(&json).expect("Failed to deserialize");
-        assert_eq!(deserialized.settings.accent_color, config.settings.accent_color);
+        assert_eq!(
+            deserialized.settings.accent_color,
+            config.settings.accent_color
+        );
     }
 }

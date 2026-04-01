@@ -1,9 +1,9 @@
 use std::io::{self, Write};
-use std::net::{TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
-use std::time::Duration;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use crate::terminal::ProxyTerminal;
 
@@ -48,12 +48,7 @@ pub static TOOLS: &[ToolInfo] = &[
 ];
 
 /// List of available providers for Claude Code
-pub static PROVIDERS: &[&str] = &[
-    "GitHub Copilot",
-    "OpenRouter",
-    "NVIDIA NIM",
-    "LM Studio",
-];
+pub static PROVIDERS: &[&str] = &["GitHub Copilot", "OpenRouter", "NVIDIA NIM", "LM Studio"];
 
 /// Hardcoded models for stub implementation (will be fetched dynamically later)
 pub static STUB_MODELS: &[&str] = &[
@@ -111,12 +106,10 @@ fn is_binary_in_path(binary: &str) -> bool {
 
 /// Get the first available binary name for a tool
 pub fn get_tool_binary(tool: &ToolInfo) -> Option<&'static str> {
-    for binary_name in tool.binary_names {
-        if is_binary_in_path(binary_name) {
-            return Some(binary_name);
-        }
-    }
-    None
+    tool.binary_names
+        .iter()
+        .find(|binary_name| is_binary_in_path(binary_name))
+        .copied()
 }
 
 /// Check if the GitHub Copilot API proxy is running by connecting to port 11437
@@ -159,38 +152,38 @@ pub fn launch_tool(
 }
 
 /// Launch tool with direct terminal access and proper signal handling
-fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: Option<&str>) -> LaunchResult {
+fn launch_tool_direct(
+    binary: &str,
+    dir: &Path,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> LaunchResult {
     #[cfg(unix)]
     {
         use signal_hook::consts::signal::*;
         use signal_hook::iterator::Signals;
-        use std::time::{Duration, Instant};
         use std::process::Command;
+        use std::time::{Duration, Instant};
 
         // Build the command
         let mut cmd = Command::new(binary);
         cmd.current_dir(dir);
 
         // Set environment variables based on provider and model
-        if let (Some(prov), Some(mdl)) = (provider, model) {
-            match prov {
-                "GitHub Copilot" => {
-                    match mdl {
-                        "Claude Max" => {
-                            cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
-                            cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
-                            cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4.5");
-                        }
-                        "Claude Pro" => {
-                            cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
-                            cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
-                            cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "gpt-5-mini");
-                        }
-                        "Claude Free" => {
-                            cmd.env("ANTHROPIC_MODEL", "gpt-5-mini");
-                        }
-                        _ => {}
-                    }
+        if let (Some("GitHub Copilot"), Some(mdl)) = (provider, model) {
+            match mdl {
+                "Claude Max" => {
+                    cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
+                    cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
+                    cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4.5");
+                }
+                "Claude Pro" => {
+                    cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
+                    cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
+                    cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "gpt-5-mini");
+                }
+                "Claude Free" => {
+                    cmd.env("ANTHROPIC_MODEL", "gpt-5-mini");
                 }
                 _ => {}
             }
@@ -203,18 +196,27 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
 
         // Spawn child in its own process group
         use std::os::unix::process::CommandExt;
-        match unsafe { cmd.pre_exec(|| { let _ = libc::setsid(); Ok(()) }).spawn() } {
+        match unsafe {
+            cmd.pre_exec(|| {
+                let _ = libc::setsid();
+                Ok(())
+            })
+            .spawn()
+        } {
             Ok(mut child) => {
                 let child_pid = child.id() as i32;
 
                 // Setup signal forwarding
-                let mut signals = match Signals::new(&[SIGINT, SIGTERM, SIGQUIT]) {
+                let mut signals = match Signals::new([SIGINT, SIGTERM, SIGQUIT]) {
                     Ok(s) => s,
                     Err(_) => {
                         // Fallback: simple wait if we cannot register signals
                         return match child.wait() {
                             Ok(_status) => LaunchResult::Success,
-                            Err(e) => LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e)),
+                            Err(e) => LaunchResult::LaunchFailed(format!(
+                                "Failed to wait for process: {}",
+                                e
+                            )),
                         };
                     }
                 };
@@ -224,7 +226,9 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
                 let signal_thread = std::thread::spawn(move || {
                     for sig in signals.forever() {
                         // Forward signal to process group
-                        unsafe { libc::kill(-s_child, sig); }
+                        unsafe {
+                            libc::kill(-s_child, sig);
+                        }
                     }
                 });
 
@@ -246,21 +250,26 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
                             std::thread::sleep(Duration::from_millis(100));
                         }
                         Err(e) => {
-                            let _ = handle.close();
+                            handle.close();
                             let _ = signal_thread.join();
-                            return LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e));
+                            return LaunchResult::LaunchFailed(format!(
+                                "Failed to wait for process: {}",
+                                e
+                            ));
                         }
                     }
                 }
 
                 // Clean up signal handling
-                let _ = handle.close();
+                handle.close();
                 let _ = signal_thread.join();
 
                 // Final wait to reap status
                 match child.wait() {
                     Ok(_status) => LaunchResult::Success,
-                    Err(e) => LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e)),
+                    Err(e) => {
+                        LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e))
+                    }
                 }
             }
             Err(e) => LaunchResult::LaunchFailed(format!("Failed to spawn process: {}", e)),
@@ -282,8 +291,7 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
                         cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
                         cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
                         cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4.5");
-                    }
-                    else if mdl.contains("gpt") {
+                    } else if mdl.contains("gpt") {
                         cmd.env("ANTHROPIC_MODEL", "gpt-5-mini");
                     }
                 }
@@ -297,19 +305,20 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
 
         #[cfg(windows)]
         {
+            use windows_sys::Win32::Foundation::*;
             use windows_sys::Win32::System::JobObjects::*;
             use windows_sys::Win32::System::Threading::*;
-            use windows_sys::Win32::Foundation::*;
 
             match cmd.spawn() {
                 Ok(child) => {
-                    let job_handle = unsafe {
-                        CreateJobObjectW(std::ptr::null(), std::ptr::null())
-                    };
+                    let job_handle =
+                        unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
 
                     if job_handle != 0 {
-                        let mut job_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-                        job_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                        let mut job_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                            unsafe { std::mem::zeroed() };
+                        job_info.BasicLimitInformation.LimitFlags =
+                            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
                         unsafe {
                             SetInformationJobObject(
@@ -319,11 +328,7 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
                                 std::mem::size_of_val(&job_info) as u32,
                             );
 
-                            let process_handle = OpenProcess(
-                                PROCESS_ALL_ACCESS,
-                                0,
-                                child.id(),
-                            );
+                            let process_handle = OpenProcess(PROCESS_ALL_ACCESS, 0, child.id());
 
                             if process_handle != 0 {
                                 AssignProcessToJobObject(job_handle, process_handle);
@@ -348,34 +353,39 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
                                     std::thread::sleep(Duration::from_millis(100));
                                 }
                                 Err(e) => {
-                                    unsafe { CloseHandle(job_handle); }
-                                    return LaunchResult::LaunchFailed(
-                                        format!("Failed to wait for process: {}", e)
-                                    );
+                                    unsafe {
+                                        CloseHandle(job_handle);
+                                    }
+                                    return LaunchResult::LaunchFailed(format!(
+                                        "Failed to wait for process: {}",
+                                        e
+                                    ));
                                 }
                             }
                         }
 
-                        unsafe { CloseHandle(job_handle); }
+                        unsafe {
+                            CloseHandle(job_handle);
+                        }
 
                         match child.wait() {
                             Ok(_status) => LaunchResult::Success,
-                            Err(e) => LaunchResult::LaunchFailed(
-                                format!("Failed to wait for process: {}", e)
-                            ),
+                            Err(e) => LaunchResult::LaunchFailed(format!(
+                                "Failed to wait for process: {}",
+                                e
+                            )),
                         }
                     } else {
                         match child.wait() {
                             Ok(_status) => LaunchResult::Success,
-                            Err(e) => LaunchResult::LaunchFailed(
-                                format!("Failed to wait for process: {}", e)
-                            ),
+                            Err(e) => LaunchResult::LaunchFailed(format!(
+                                "Failed to wait for process: {}",
+                                e
+                            )),
                         }
                     }
                 }
-                Err(e) => LaunchResult::LaunchFailed(
-                    format!("Failed to spawn process: {}", e)
-                ),
+                Err(e) => LaunchResult::LaunchFailed(format!("Failed to spawn process: {}", e)),
             }
         }
 
@@ -384,14 +394,15 @@ fn launch_tool_direct(binary: &str, dir: &Path, provider: Option<&str>, model: O
             match cmd.spawn() {
                 Ok(mut child) => match child.wait() {
                     Ok(_status) => LaunchResult::Success,
-                    Err(e) => LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e)),
+                    Err(e) => {
+                        LaunchResult::LaunchFailed(format!("Failed to wait for process: {}", e))
+                    }
                 },
                 Err(e) => LaunchResult::LaunchFailed(format!("Failed to spawn process: {}", e)),
             }
         }
     }
 }
-
 
 /// Prepare terminal for tool launch (restore terminal state)
 pub fn prepare_for_launch(tool_name: &str) {
@@ -432,7 +443,7 @@ pub fn restore_after_launch() {
     let _ = ratatui::crossterm::execute!(out, ratatui::crossterm::terminal::Clear(ClearType::All));
 
     // Reset attributes
-    let _ = print!("\x1B[0m");
+    print!("\x1B[0m");
     let _ = out.flush();
 
     // Very brief pause to let terminal settle
@@ -441,7 +452,7 @@ pub fn restore_after_launch() {
 
 /// Spawn Claude proxy in an embedded PTY for background operation
 pub fn spawn_proxy_terminal(size: (u16, u16)) -> Result<ProxyTerminal, Box<dyn std::error::Error>> {
-    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
     let pty_system = native_pty_system();
 

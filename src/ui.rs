@@ -5,7 +5,9 @@ use crate::tools::PROVIDERS;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{block::BorderType, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    block::BorderType, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
 use ratatui::Frame;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -69,17 +71,44 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Dialog::Opening { tool_name } => {
             render_opening_dialog(frame, area, tool_name, &theme);
         }
-        Dialog::CommandBar { query, filtered_indices, selected_index } => {
-            render_command_bar(frame, area, query, filtered_indices, *selected_index, &theme);
+        Dialog::CommandBar {
+            query,
+            filtered_indices,
+            selected_index,
+        } => {
+            render_command_bar(
+                frame,
+                area,
+                query,
+                filtered_indices,
+                *selected_index,
+                &theme,
+            );
         }
         Dialog::ProviderConfig { selected_index } => {
             render_provider_config(frame, area, *selected_index, &theme);
         }
-        Dialog::KeybindConfig { selected_index, editing_field } => {
+        Dialog::KeybindConfig {
+            selected_index,
+            editing_field,
+        } => {
             render_keybind_config(frame, area, app, *selected_index, *editing_field, &theme);
         }
-        Dialog::EnvConfig { entries, selected_index, editing_field, input_buffer } => {
-            render_env_config(frame, area, entries, *selected_index, *editing_field, input_buffer, &theme);
+        Dialog::EnvConfig {
+            entries,
+            selected_index,
+            editing_field,
+            input_buffer,
+        } => {
+            render_env_config(
+                frame,
+                area,
+                entries,
+                *selected_index,
+                *editing_field,
+                input_buffer,
+                &theme,
+            );
         }
         Dialog::SettingsConfig { selected_index } => {
             render_settings_config(frame, area, app, *selected_index, &theme);
@@ -95,7 +124,8 @@ fn render_left_column(frame: &mut Frame, area: Rect, app: &mut App, theme: &Them
     let max_allowed = area.height.saturating_sub(6); // leave space for navigation and bottom bar
     let ascii_height = if ascii_lines + 2 > max_allowed {
         // Try loading small cat-only ASCII
-        let small = std::fs::read_to_string("ascii_cat.md").unwrap_or_else(|_| app.ascii_art.clone());
+        let small =
+            std::fs::read_to_string("ascii_cat.md").unwrap_or_else(|_| app.ascii_art.clone());
         let small_lines = small.lines().count() as u16;
         if small_lines + 2 > max_allowed {
             // Still too big, clamp to max_allowed
@@ -139,9 +169,7 @@ fn render_ascii_box(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme)
         .border_style(Style::default().fg(theme.border_normal));
 
     if app.proxy_terminal.is_some() {
-        block = block.title_top(
-            Line::from(" [●] proxy ").right_aligned()
-        );
+        block = block.title_top(Line::from(" [●] proxy ").right_aligned());
     }
 
     let inner = block.inner(area);
@@ -198,10 +226,16 @@ fn render_ascii_box(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme)
         frame.render_widget(text, chunks[0]);
 
         let status_text = vec![
-            Line::from(Span::styled("Copilot proxy:", Style::default().fg(accent_color))),
+            Line::from(Span::styled(
+                "Copilot proxy:",
+                Style::default().fg(accent_color),
+            )),
             Line::from(Span::styled("  Active", Style::default().fg(accent_color))),
             Line::from(""),
-            Line::from(Span::styled("[c] toggle", Style::default().fg(theme.text_dim))),
+            Line::from(Span::styled(
+                "[c] toggle",
+                Style::default().fg(theme.text_dim),
+            )),
         ];
         let status = Paragraph::new(status_text).alignment(Alignment::Left);
         frame.render_widget(status, chunks[1]);
@@ -246,7 +280,7 @@ fn render_browser_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &T
 
     if app.favorites_dirs.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for fav in &app.favorites_dirs {
@@ -284,7 +318,7 @@ fn render_browser_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &T
 
     if app.recents_dirs.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for recent in &app.recents_dirs {
@@ -343,7 +377,7 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
 
     if app.favorites_tools.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, tool) in app.favorites_tools.iter().enumerate() {
@@ -376,7 +410,7 @@ fn render_tool_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &Them
 
     if app.recents_tools.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, tool) in app.recents_tools.iter().enumerate() {
@@ -430,7 +464,7 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
 
     if app.favorites_providers.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, provider) in app.favorites_providers.iter().enumerate() {
@@ -463,7 +497,7 @@ fn render_provider_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &
 
     if app.recents_providers.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, provider) in app.recents_providers.iter().enumerate() {
@@ -517,7 +551,7 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     if app.favorites_models.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, model) in app.favorites_models.iter().enumerate() {
@@ -550,7 +584,7 @@ fn render_model_navigation(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     if app.recents_models.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::raw("  (none)").style(Style::default().fg(theme.text_dim)),
+            Span::raw("  (none)").style(Style::default().fg(theme.text_dim))
         ])));
     } else {
         for (idx, model) in app.recents_models.iter().enumerate() {
@@ -955,7 +989,8 @@ fn get_context_keybinds(app: &App) -> String {
     // Handle focused proxy terminal
     if let Some(ref terminal) = app.proxy_terminal {
         if terminal.focused {
-            return "space unfocus  \u{25CF}  type input to proxy  \u{25CF}  ctrl+c/d to proxy".to_string();
+            return "space unfocus  \u{25CF}  type input to proxy  \u{25CF}  ctrl+c/d to proxy"
+                .to_string();
         } else if terminal.visible {
             return "enter focus  \u{25CF}  c hide  \u{25CF}  ctrl+p stop  \u{25CF}  normal navigation".to_string();
         }
@@ -995,8 +1030,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 
 /// Render a dimmed background for dialogs
 fn render_dialog_background(frame: &mut Frame, area: Rect) {
-    let dim_block = Block::default()
-        .style(Style::default().bg(ratatui::style::Color::Black));
+    let dim_block = Block::default().style(Style::default().bg(ratatui::style::Color::Black));
     // Removed Clear widget to allow background to show through for semi-transparent effect
     frame.render_widget(dim_block, area);
 }
@@ -1005,7 +1039,7 @@ fn render_dialog_background(frame: &mut Frame, area: Rect) {
 fn render_add_favorite_dialog(
     frame: &mut Frame,
     area: Rect,
-    path: &std::path::PathBuf,
+    path: &std::path::Path,
     selection: usize,
     theme: &Theme,
 ) {
@@ -1054,7 +1088,10 @@ fn render_add_favorite_dialog(
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled("Select path to add:", Style::default().fg(theme.text_normal))),
+        Line::from(Span::styled(
+            "Select path to add:",
+            Style::default().fg(theme.text_normal),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::styled(format!("{} ", radio1), option1_style),
@@ -1077,12 +1114,7 @@ fn render_add_favorite_dialog(
 }
 
 /// Render the Tool Not Installed dialog
-fn render_tool_not_installed_dialog(
-    frame: &mut Frame,
-    area: Rect,
-    tool_name: &str,
-    theme: &Theme,
-) {
+fn render_tool_not_installed_dialog(frame: &mut Frame, area: Rect, tool_name: &str, theme: &Theme) {
     render_dialog_background(frame, area);
 
     let dialog_area = centered_rect(50, 9, area);
@@ -1145,7 +1177,10 @@ fn render_error_dialog(frame: &mut Frame, area: Rect, message: &str, theme: &The
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(message, Style::default().fg(theme.text_normal))),
+        Line::from(Span::styled(
+            message,
+            Style::default().fg(theme.text_normal),
+        )),
         Line::from(""),
         Line::from(Span::styled(
             "[Enter/Esc] OK",
@@ -1197,10 +1232,7 @@ fn render_settings_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &The
     };
 
     // Build accent color display with arrows
-    let accent_display = format!(
-        "< {} >",
-        app.settings.accent_color.to_lowercase()
-    );
+    let accent_display = format!("< {} >", app.settings.accent_color.to_lowercase());
 
     // Build nav mode display with arrows
     let nav_display = format!("< {} >", app.settings.nav_mode.to_lowercase());
@@ -1341,7 +1373,7 @@ fn render_command_bar(
     theme: &Theme,
 ) {
     // Position: centered, top portion of screen
-    let width = (area.width * 60 / 100).min(80).max(40);
+    let width = (area.width * 60 / 100).clamp(40, 80);
     let height = (filtered.len() as u16 + 4).min(area.height / 2).max(6);
     let x = (area.width.saturating_sub(width)) / 2;
     let y = area.height / 6;
@@ -1361,11 +1393,20 @@ fn render_command_bar(
     frame.render_widget(block, dialog_area);
 
     // Search field with cursor
-    let cursor = if query.is_empty() { "type to search..." } else { "_" };
+    let cursor = if query.is_empty() {
+        "type to search..."
+    } else {
+        "_"
+    };
     let search_line = Line::from(vec![
         Span::styled("> ", Style::default().fg(theme.highlight)),
         Span::styled(query, Style::default().fg(theme.text_normal)),
-        Span::styled(cursor, Style::default().fg(theme.highlight).add_modifier(Modifier::SLOW_BLINK)),
+        Span::styled(
+            cursor,
+            Style::default()
+                .fg(theme.highlight)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
     ]);
     frame.render_widget(
         Paragraph::new(search_line),
@@ -1380,17 +1421,20 @@ fn render_command_bar(
     );
 
     // Command list
-    let list_area = Rect::new(inner.x + 1, inner.y + 2, inner.width.saturating_sub(2), inner.height.saturating_sub(3));
+    let list_area = Rect::new(
+        inner.x + 1,
+        inner.y + 2,
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(3),
+    );
     let max_items = (list_area.height as usize).min(filtered.len());
 
-    for (i, &(cmd_idx, _)) in filtered
-        .iter()
-        .enumerate()
-        .take(max_items)
-    {
+    for (i, &(cmd_idx, _)) in filtered.iter().enumerate().take(max_items) {
         let cmd = &COMMANDS[cmd_idx];
         let style = if i == selected {
-            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_normal)
         };
@@ -1419,18 +1463,18 @@ fn render_command_bar(
         ]);
         frame.render_widget(
             Paragraph::new(hint).alignment(Alignment::Center),
-            Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1),
+            Rect::new(
+                inner.x,
+                inner.y + inner.height.saturating_sub(1),
+                inner.width,
+                1,
+            ),
         );
     }
 }
 
 /// Render the provider configuration dialog
-fn render_provider_config(
-    frame: &mut Frame,
-    area: Rect,
-    selected_index: usize,
-    theme: &Theme,
-) {
+fn render_provider_config(frame: &mut Frame, area: Rect, selected_index: usize, theme: &Theme) {
     let dialog_area = centered_rect(60, 50, area);
     render_dialog_background(frame, area);
     frame.render_widget(Clear, dialog_area);
@@ -1449,22 +1493,39 @@ fn render_provider_config(
         .enumerate()
         .map(|(i, provider)| {
             let style = if i == selected_index {
-                Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text_normal)
             };
             let prefix = if i == selected_index { "▸ " } else { "  " };
-            let auth_type = if *provider == "GitHub Copilot" { "(proxy login)" } else { "(env key)" };
+            let auth_type = if *provider == "GitHub Copilot" {
+                "(proxy login)"
+            } else {
+                "(env key)"
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),
                 Span::styled(*provider, style),
-                Span::styled(format!(" {}", auth_type), Style::default().fg(theme.text_dim)),
+                Span::styled(
+                    format!(" {}", auth_type),
+                    Style::default().fg(theme.text_dim),
+                ),
             ]))
         })
         .collect();
 
     let list = List::new(items);
-    frame.render_widget(list, Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), inner.height.saturating_sub(2)));
+    frame.render_widget(
+        list,
+        Rect::new(
+            inner.x + 1,
+            inner.y + 1,
+            inner.width.saturating_sub(2),
+            inner.height.saturating_sub(2),
+        ),
+    );
 }
 
 /// Render the keybind configuration dialog
@@ -1490,7 +1551,7 @@ fn render_keybind_config(
     frame.render_widget(block, dialog_area);
 
     let keybinds = &app.settings.keybinds;
-    let items = vec![
+    let items = [
         ("Up", &keybinds.up),
         ("Down", &keybinds.down),
         ("Left", &keybinds.left),
@@ -1501,7 +1562,9 @@ fn render_keybind_config(
         let is_selected = i == selected_index;
         let is_editing = editing_field == Some(i);
         let style = if is_selected {
-            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_normal)
         };
@@ -1514,15 +1577,25 @@ fn render_keybind_config(
         let line = Line::from(vec![
             Span::styled(prefix, style),
             Span::styled(format!("{}: ", label), style),
-            Span::styled(value_display, if is_editing {
-                Style::default().fg(theme.highlight).add_modifier(Modifier::SLOW_BLINK)
-            } else {
-                Style::default().fg(theme.text_dim)
-            }),
+            Span::styled(
+                value_display,
+                if is_editing {
+                    Style::default()
+                        .fg(theme.highlight)
+                        .add_modifier(Modifier::SLOW_BLINK)
+                } else {
+                    Style::default().fg(theme.text_dim)
+                },
+            ),
         ]);
         frame.render_widget(
             Paragraph::new(line),
-            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+            Rect::new(
+                inner.x + 1,
+                inner.y + 1 + i as u16,
+                inner.width.saturating_sub(2),
+                1,
+            ),
         );
     }
 
@@ -1545,7 +1618,12 @@ fn render_keybind_config(
     ]);
     frame.render_widget(
         Paragraph::new(hint).alignment(Alignment::Center),
-        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(2),
+            inner.width,
+            1,
+        ),
     );
 }
 
@@ -1576,7 +1654,9 @@ fn render_env_config(
     for (i, (key, value)) in entries.iter().enumerate() {
         let is_selected = i == selected_index;
         let style = if is_selected {
-            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_normal)
         };
@@ -1602,7 +1682,12 @@ fn render_env_config(
         ]);
         frame.render_widget(
             Paragraph::new(line),
-            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+            Rect::new(
+                inner.x + 1,
+                inner.y + 1 + i as u16,
+                inner.width.saturating_sub(2),
+                1,
+            ),
         );
     }
 
@@ -1610,7 +1695,9 @@ fn render_env_config(
     let add_idx = entries.len();
     let is_add_selected = selected_index == add_idx;
     let add_style = if is_add_selected {
-        Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.highlight)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.text_dim)
     };
@@ -1620,7 +1707,12 @@ fn render_env_config(
             Span::styled(add_prefix, add_style),
             Span::styled("+ Add new variable", add_style),
         ])),
-        Rect::new(inner.x + 1, inner.y + 1 + add_idx as u16, inner.width.saturating_sub(2), 1),
+        Rect::new(
+            inner.x + 1,
+            inner.y + 1 + add_idx as u16,
+            inner.width.saturating_sub(2),
+            1,
+        ),
     );
 
     // Hint
@@ -1634,7 +1726,12 @@ fn render_env_config(
     ]);
     frame.render_widget(
         Paragraph::new(hint).alignment(Alignment::Center),
-        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(2),
+            inner.width,
+            1,
+        ),
     );
 }
 
@@ -1659,7 +1756,7 @@ fn render_settings_config(
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
-    let settings_items = vec![
+    let settings_items = [
         ("Accent Color", &app.settings.accent_color),
         ("Navigation Mode", &app.settings.nav_mode),
     ];
@@ -1667,7 +1764,9 @@ fn render_settings_config(
     for (i, (label, value)) in settings_items.iter().enumerate() {
         let is_selected = i == selected_index;
         let style = if is_selected {
-            Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_normal)
         };
@@ -1679,17 +1778,28 @@ fn render_settings_config(
         ]);
         frame.render_widget(
             Paragraph::new(line),
-            Rect::new(inner.x + 1, inner.y + 1 + i as u16, inner.width.saturating_sub(2), 1),
+            Rect::new(
+                inner.x + 1,
+                inner.y + 1 + i as u16,
+                inner.width.saturating_sub(2),
+                1,
+            ),
         );
     }
 
     // Hint
-    let hint = Line::from(vec![
-        Span::styled("Use existing settings overlay (Ctrl+S) for full options", Style::default().fg(theme.text_dim)),
-    ]);
+    let hint = Line::from(vec![Span::styled(
+        "Use existing settings overlay (Ctrl+S) for full options",
+        Style::default().fg(theme.text_dim),
+    )]);
     frame.render_widget(
         Paragraph::new(hint).alignment(Alignment::Center),
-        Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, 1),
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(2),
+            inner.width,
+            1,
+        ),
     );
 }
 
@@ -1738,7 +1848,10 @@ fn render_global_config_overlay(app: &App, frame: &mut Frame) {
 
         let is_selected = i == app.global_config_selection;
         let (prefix, style) = if is_selected {
-            ("> ", Style::default().fg(accent).add_modifier(Modifier::BOLD))
+            (
+                "> ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            )
         } else {
             ("  ", Style::default().fg(Color::Gray))
         };
@@ -1762,8 +1875,5 @@ fn render_global_config_overlay(app: &App, frame: &mut Frame) {
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(ratatui::layout::Alignment::Center);
-    frame.render_widget(
-        footer,
-        Rect::new(inner.x, footer_y, inner.width, 1),
-    );
+    frame.render_widget(footer, Rect::new(inner.x, footer_y, inner.width, 1));
 }

@@ -19,8 +19,9 @@ impl Theme {
     /// Create a theme with the specified accent color
     pub fn with_accent(accent_color: &str) -> Self {
         let accent = Self::from_name(accent_color);
+        // Increase border thickness by using a brighter border color for both normal and focused
         Self {
-            border_normal: Color::DarkGray,
+            border_normal: Color::Rgb(100, 100, 100),
             border_focused: accent,
             highlight: accent,
             text_normal: Color::White,
@@ -28,13 +29,42 @@ impl Theme {
         }
     }
 
+    /// Create a theme with a custom hex color
+    pub fn with_custom_hex(hex_color: &str) -> Self {
+        let accent = Self::from_hex(hex_color);
+        Self {
+            border_normal: Color::Rgb(100, 100, 100),
+            border_focused: accent,
+            highlight: accent,
+            text_normal: Color::White,
+            text_dim: Color::DarkGray,
+        }
+    }
+
+    /// Parse a hex color string to Color
+    pub fn from_hex(hex: &str) -> Color {
+        if hex.len() == 7 && hex.starts_with('#') {
+            let hex = &hex[1..];
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                u8::from_str_radix(&hex[0..2], 16),
+                u8::from_str_radix(&hex[2..4], 16),
+                u8::from_str_radix(&hex[4..6], 16),
+            ) {
+                return Color::Rgb(r, g, b);
+            }
+        }
+        Color::Rgb(255, 165, 0) // Default to orange if parsing fails
+    }
+
     /// Convert a color name to a Color value
     pub fn from_name(name: &str) -> Color {
         match name.to_lowercase().as_str() {
             "orange" => Color::Rgb(255, 165, 0),
-            "blue" => Color::Blue,
-            "green" => Color::Green,
             "red" => Color::Red,
+            "purple" => Color::Rgb(128, 0, 128),
+            "blue" => Color::Blue,
+            "light_blue" => Color::Rgb(173, 216, 230),
+            "green" => Color::Green,
             "yellow" => Color::Yellow,
             "magenta" => Color::Magenta,
             "cyan" => Color::Cyan,
@@ -53,7 +83,7 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(theme.text_normal, Color::White);
         assert_eq!(theme.text_dim, Color::DarkGray);
-        assert_eq!(theme.border_normal, Color::DarkGray);
+        assert_eq!(theme.border_normal, Color::Rgb(100, 100, 100));
     }
 
     #[test]

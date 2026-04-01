@@ -5,6 +5,7 @@ use std::io;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum ModelProfile {
     ClaudeMax,
     ClaudePro,
@@ -16,14 +17,32 @@ impl ModelProfile {
         let mut vars = HashMap::new();
         match self {
             ModelProfile::ClaudeMax => {
-                vars.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), "claude-opus-4.5".to_string());
-                vars.insert("ANTHROPIC_MODEL".to_string(), "claude-sonnet-4.5".to_string());
-                vars.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), "claude-haiku-4.5".to_string());
+                vars.insert(
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
+                    "claude-opus-4.5".to_string(),
+                );
+                vars.insert(
+                    "ANTHROPIC_MODEL".to_string(),
+                    "claude-sonnet-4.5".to_string(),
+                );
+                vars.insert(
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
+                    "claude-haiku-4.5".to_string(),
+                );
             }
             ModelProfile::ClaudePro => {
-                vars.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), "claude-opus-4.5".to_string());
-                vars.insert("ANTHROPIC_MODEL".to_string(), "claude-sonnet-4.5".to_string());
-                vars.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), "gpt-5-mini".to_string());
+                vars.insert(
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
+                    "claude-opus-4.5".to_string(),
+                );
+                vars.insert(
+                    "ANTHROPIC_MODEL".to_string(),
+                    "claude-sonnet-4.5".to_string(),
+                );
+                vars.insert(
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
+                    "gpt-5-mini".to_string(),
+                );
             }
             ModelProfile::ClaudeFree => {
                 vars.insert("ANTHROPIC_MODEL".to_string(), "gpt-5-mini".to_string());
@@ -65,7 +84,10 @@ impl ClaudeSettings {
             let content = fs::read_to_string(path)?;
             let raw: Value = serde_json::from_str(&content)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            Ok(Self { raw, path: path.clone() })
+            Ok(Self {
+                raw,
+                path: path.clone(),
+            })
         } else {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
@@ -86,7 +108,10 @@ impl ClaudeSettings {
                 "env": default_env
             });
 
-            let settings = Self { raw, path: path.clone() };
+            let settings = Self {
+                raw,
+                path: path.clone(),
+            };
             settings.save()?;
             Ok(settings)
         }
@@ -144,17 +169,35 @@ mod tests {
     #[test]
     fn test_claude_max_env_vars() {
         let vars = ModelProfile::ClaudeMax.env_vars();
-        assert_eq!(vars.get("ANTHROPIC_DEFAULT_OPUS_MODEL"), Some(&"claude-opus-4.5".to_string()));
-        assert_eq!(vars.get("ANTHROPIC_MODEL"), Some(&"claude-sonnet-4.5".to_string()));
-        assert_eq!(vars.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"), Some(&"claude-haiku-4.5".to_string()));
+        assert_eq!(
+            vars.get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some(&"claude-opus-4.5".to_string())
+        );
+        assert_eq!(
+            vars.get("ANTHROPIC_MODEL"),
+            Some(&"claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            vars.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some(&"claude-haiku-4.5".to_string())
+        );
     }
 
     #[test]
     fn test_claude_pro_env_vars() {
         let vars = ModelProfile::ClaudePro.env_vars();
-        assert_eq!(vars.get("ANTHROPIC_DEFAULT_OPUS_MODEL"), Some(&"claude-opus-4.5".to_string()));
-        assert_eq!(vars.get("ANTHROPIC_MODEL"), Some(&"claude-sonnet-4.5".to_string()));
-        assert_eq!(vars.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"), Some(&"gpt-5-mini".to_string()));
+        assert_eq!(
+            vars.get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some(&"claude-opus-4.5".to_string())
+        );
+        assert_eq!(
+            vars.get("ANTHROPIC_MODEL"),
+            Some(&"claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            vars.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some(&"gpt-5-mini".to_string())
+        );
     }
 
     #[test]
@@ -211,9 +254,15 @@ mod tests {
         let mut settings = ClaudeSettings::load_from_path(&test_file).unwrap();
         settings.set_model_profile(ModelProfile::ClaudePro);
 
-        assert_eq!(settings.raw["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "claude-opus-4.5");
+        assert_eq!(
+            settings.raw["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "claude-opus-4.5"
+        );
         assert_eq!(settings.raw["env"]["ANTHROPIC_MODEL"], "claude-sonnet-4.5");
-        assert_eq!(settings.raw["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "gpt-5-mini");
+        assert_eq!(
+            settings.raw["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "gpt-5-mini"
+        );
         assert_eq!(settings.raw["other"], "preserved");
 
         fs::remove_file(&test_file).ok();
