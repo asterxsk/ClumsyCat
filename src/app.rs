@@ -5,6 +5,8 @@ use crate::search::{filter_entries, SearchMode};
 use crate::terminal::ProxyTerminal;
 use crate::tools::{self, find_tool_by_display_name, LaunchResult, PROVIDERS, STUB_MODELS, TOOLS};
 use crossterm::event::{KeyCode, KeyModifiers};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -578,7 +580,13 @@ impl App {
 
                     // Logging: capture raw key and mapped code for debugging navigation issues
                     #[cfg(debug_assertions)]
-                    eprintln!("key press: raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
+                    {
+                        eprintln!("key press: raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
+                        // Also append to a persistent log for later inspection
+                        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("key_actions.log") {
+                            let _ = writeln!(f, "raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
+                        }
+                    }
 
                     // Handle dialog input first (highest priority)
                     if self.dialog != Dialog::None {
