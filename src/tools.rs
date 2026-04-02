@@ -3,7 +3,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::terminal::ProxyTerminal;
 
@@ -163,7 +163,6 @@ fn launch_tool_direct(
         use signal_hook::consts::signal::*;
         use signal_hook::iterator::Signals;
         use std::process::Command;
-        use std::time::{Duration, Instant};
 
         // Build the command
         let mut cmd = Command::new(binary);
@@ -279,23 +278,17 @@ fn launch_tool_direct(
     #[cfg(not(unix))]
     {
         use std::process::Command;
-        use std::time::{Duration, Instant};
 
         let mut cmd = Command::new(binary);
         cmd.current_dir(dir);
 
-        if let (Some(prov), Some(mdl)) = (provider, model) {
-            match prov {
-                "GitHub Copilot" => {
-                    if mdl.contains("claude") {
-                        cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
-                        cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
-                        cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4.5");
-                    } else if mdl.contains("gpt") {
-                        cmd.env("ANTHROPIC_MODEL", "gpt-5-mini");
-                    }
-                }
-                _ => {}
+        if let (Some("GitHub Copilot"), Some(mdl)) = (provider, model) {
+            if mdl.contains("claude") {
+                cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4.5");
+                cmd.env("ANTHROPIC_MODEL", "claude-sonnet-4.5");
+                cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4.5");
+            } else if mdl.contains("gpt") {
+                cmd.env("ANTHROPIC_MODEL", "gpt-5-mini");
             }
         }
 
@@ -305,85 +298,87 @@ fn launch_tool_direct(
 
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+            use std::sync::atomic::{AtomicBool, Ordering};
             use windows_sys::Win32::Foundation::*;
-            use windows_sys::Win32::System::JobObjects::*;
-            use windows_sys::Win32::System::Threading::*;
+            use windows_sys::Win32::System::Console::*;
+
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            const CTRL_BREAK_EVENT: u32 = 1;
+
+            static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
+
+            unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> i32 {
+                match ctrl_type {
+                    CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+                        CTRL_C_PRESSED.store(true, Ordering::Relaxed);
+                        TRUE
+                    }
+                    _ => FALSE,
+                }
+            }
+
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
 
             match cmd.spawn() {
-                Ok(child) => {
-                    let job_handle =
-                        unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+                Ok(mut child) => {
+                    let child_pid = child.id();
 
-                    if job_handle != 0 {
-                        let mut job_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
-                            unsafe { std::mem::zeroed() };
-                        job_info.BasicLimitInformation.LimitFlags =
-                            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    CTRL_C_PRESSED.store(false, Ordering::Relaxed);
 
-                        unsafe {
-                            SetInformationJobObject(
-                                job_handle,
-                                JobObjectExtendedLimitInformation,
-                                &mut job_info as *mut _ as *mut _,
-                                std::mem::size_of_val(&job_info) as u32,
-                            );
+                    let handler_installed = unsafe {
+                        SetConsoleCtrlHandler(Some(ctrl_handler), TRUE) != 0
+                    };
 
-                            let process_handle = OpenProcess(PROCESS_ALL_ACCESS, 0, child.id());
+                    if !handler_installed {
+                        eprintln!(
+                            "Warning: Failed to install console control handler: {}",
+                            std::io::Error::last_os_error()
+                        );
+                    }
 
-                            if process_handle != 0 {
-                                AssignProcessToJobObject(job_handle, process_handle);
-                                CloseHandle(process_handle);
+                    let timeout = Duration::from_secs(3600);
+                    let start = Instant::now();
+
+                    loop {
+                        if CTRL_C_PRESSED.load(Ordering::Relaxed) {
+                            unsafe {
+                                GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child_pid);
                             }
+                            CTRL_C_PRESSED.store(false, Ordering::Relaxed);
                         }
 
-                        let timeout = Duration::from_secs(3600);
-                        let start = Instant::now();
-
-                        let mut child = child;
-                        loop {
-                            match child.try_wait() {
-                                Ok(Some(_status)) => break,
-                                Ok(None) => {
-                                    if start.elapsed() > timeout {
-                                        unsafe {
-                                            TerminateJobObject(job_handle, 1);
-                                        }
-                                        break;
+                        match child.try_wait() {
+                            Ok(Some(_status)) => break,
+                            Ok(None) => {
+                                if start.elapsed() > timeout {
+                                    // try graceful termination via ctrl event
+                                    unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child_pid); }
+                                    std::thread::sleep(Duration::from_secs(2));
+                                    if child.try_wait().unwrap_or(None).is_none() {
+                                        let _ = child.kill();
                                     }
-                                    std::thread::sleep(Duration::from_millis(100));
+                                    break;
                                 }
-                                Err(e) => {
-                                    unsafe {
-                                        CloseHandle(job_handle);
-                                    }
-                                    return LaunchResult::LaunchFailed(format!(
-                                        "Failed to wait for process: {}",
-                                        e
-                                    ));
-                                }
+                                std::thread::sleep(Duration::from_millis(100));
                             }
-                        }
-
-                        unsafe {
-                            CloseHandle(job_handle);
-                        }
-
-                        match child.wait() {
-                            Ok(_status) => LaunchResult::Success,
-                            Err(e) => LaunchResult::LaunchFailed(format!(
-                                "Failed to wait for process: {}",
-                                e
-                            )),
-                        }
-                    } else {
-                        match child.wait() {
-                            Ok(_status) => LaunchResult::Success,
-                            Err(e) => LaunchResult::LaunchFailed(format!(
-                                "Failed to wait for process: {}",
-                                e
-                            )),
+                            Err(e) => {
+                                if handler_installed {
+                                    unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), FALSE); }
+                                }
+                                return LaunchResult::LaunchFailed(format!(
+                                    "Failed to wait for process: {}",
+                                    e
+                                ));
+                            }
                         }
                     }
+
+                    if handler_installed {
+                        unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), FALSE); }
+                    }
+
+                    LaunchResult::Success
                 }
                 Err(e) => LaunchResult::LaunchFailed(format!("Failed to spawn process: {}", e)),
             }
@@ -450,6 +445,71 @@ pub fn restore_after_launch() {
     std::thread::sleep(std::time::Duration::from_millis(30));
 }
 
+/// Start copilot-api proxy in background for GitHub Copilot integration
+pub fn start_copilot_proxy() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+
+        let mut cmd = Command::new("copilot-api");
+        cmd.args(&["start", "--proxy-env"]);
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+
+        use std::os::unix::process::CommandExt;
+        match unsafe {
+            cmd.pre_exec(|| {
+                let _ = libc::setsid();
+                Ok(())
+            })
+            .spawn()
+        } {
+            Ok(child) => Some(child.id()),
+            Err(_) => None,
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        use std::process::Command;
+
+        match Command::new("copilot-api")
+            .args(["start", "--proxy-env"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => Some(child.id()),
+            Err(_) => None,
+        }
+    }
+}
+
+/// Kill the copilot-proxy process
+pub fn stop_copilot_proxy(pid: u32) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGTERM);
+        }
+        thread::sleep(Duration::from_millis(100));
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output();
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+    }
+}
+
 /// Spawn Claude proxy in an embedded PTY for background operation
 pub fn spawn_proxy_terminal(size: (u16, u16)) -> Result<ProxyTerminal, Box<dyn std::error::Error>> {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -463,8 +523,10 @@ pub fn spawn_proxy_terminal(size: (u16, u16)) -> Result<ProxyTerminal, Box<dyn s
         pixel_height: 0,
     })?;
 
-    // Spawn claude-proxy command
-    let cmd = CommandBuilder::new("claude-proxy");
+    // Spawn copilot-api proxy command
+    let mut cmd = CommandBuilder::new("copilot-api");
+    cmd.arg("start");
+    cmd.arg("--proxy-env");
     let child = pair.slave.spawn_command(cmd)?;
 
     // Create channel for PTY output

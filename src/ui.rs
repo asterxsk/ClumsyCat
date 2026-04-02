@@ -655,9 +655,15 @@ fn render_browser_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
                 filtered_indices.len()
             );
 
+            let query_span = if app.search_typing_mode {
+                Span::styled(query, Style::default().fg(Color::Rgb(255, 165, 0)))
+            } else {
+                Span::styled(query, Style::default().fg(theme.text_normal))
+            };
+
             let search_line = Line::from(vec![
                 Span::styled("/", Style::default().fg(theme.highlight)),
-                Span::styled(query, Style::default().fg(theme.text_normal)),
+                query_span,
                 Span::styled("_", Style::default().fg(theme.highlight)), // Cursor
                 Span::styled(match_info, Style::default().fg(theme.text_dim)),
             ]);
@@ -999,11 +1005,7 @@ fn get_context_keybinds(app: &App) -> String {
     // Page-specific keybinds (all lowercase, separated by bullet)
     match app.page {
         Page::Browser => {
-            if app.proxy_terminal.is_some() {
-                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
-            } else {
-                "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
-            }
+            "/ search  \u{25CF}  enter select  \u{25CF}  ctrl+f favorite  \u{25CF}  ctrl+s settings  \u{25CF}  d open  \u{25CF}  a back  \u{25CF}  w/s up/down  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()
         }
         Page::ToolSelection => {
             "w/s navigate  \u{25CF}  enter select  \u{25CF}  a back  \u{25CF}  tab cycle panel  \u{25CF}  ctrl+p proxy  \u{25CF}  ctrl+d x2 quit".to_string()

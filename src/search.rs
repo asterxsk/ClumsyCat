@@ -56,7 +56,7 @@ impl SearchMode {
 /// Fuzzy match scoring for command bar filtering.
 /// Returns Some(score) if query matches target, None otherwise.
 /// Higher scores = better matches.
-pub fn fuzzy_score(query: &str, target: &str) -> Option<i32> {
+pub fn _fuzzy_score(query: &str, target: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }
@@ -101,12 +101,12 @@ pub fn fuzzy_score(query: &str, target: &str) -> Option<i32> {
 }
 
 /// Filter commands using fuzzy matching, returning (index, score) pairs sorted by score descending
-pub fn filter_commands_fuzzy<'a>(
+pub fn _filter_commands_fuzzy<'a>(
     commands: impl Iterator<Item = (usize, &'a str)>,
     query: &str,
 ) -> Vec<(usize, i32)> {
     let mut matches: Vec<(usize, i32)> = commands
-        .filter_map(|(idx, name)| fuzzy_score(query, name).map(|score| (idx, score)))
+        .filter_map(|(idx, name)| _fuzzy_score(query, name).map(|score| (idx, score)))
         .collect();
     matches.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by score descending
     matches

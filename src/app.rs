@@ -56,6 +56,7 @@ pub enum Dialog {
         editing_field: Option<usize>, // 0=key, 1=value
         input_buffer: String,
     },
+    #[allow(dead_code)]
     SettingsConfig {
         selected_index: usize,
     },
@@ -86,7 +87,7 @@ pub const COMMANDS: &[Command] = &[
         description: "Open settings",
     },
     Command {
-        name: "globalprofileconf",
+        name: "globalconf",
         description: "switch claude code model configuration",
     },
 ];
@@ -115,6 +116,7 @@ pub struct App {
     pub ascii_art: String,
     pub default_mode: bool, // true when launched with --default flag
     pub proxy_auto_start: bool,  // true when proxy should auto-start in default mode
+    pub auto_advance_timer: Option<Instant>, // timer for auto-advancing in default mode
 
     // Page 1: Browser state
     pub current_dir: PathBuf,
@@ -265,12 +267,13 @@ impl App {
 
         // Determine starting page and pre-selections based on default_mode
         let (page, selected_tool, selected_provider) = if default_mode {
-            // Pre-select Claude Code and GitHub Copilot
+            // Pre-select Claude Code and GitHub Copilot for default mode
             let tool = find_tool_by_display_name("Claude Code").map(|t| t.display_name.to_string());
             let provider = Some("GitHub Copilot".to_string());
             (Page::Browser, tool, provider)
         } else {
-            (Page::ToolSelection, None, None)
+            // Non-default mode also starts on Browser page
+            (Page::Browser, None, None)
         };
 
         Self {
@@ -282,6 +285,8 @@ impl App {
             settings: config.settings.clone(),
             ascii_art,
             default_mode,
+            proxy_auto_start: default_mode,  // auto-start proxy in default mode
+            auto_advance_timer: Some(Instant::now()),  // Always auto-advance from Browser page
 
             // Page 1: Browser state
             current_dir,
@@ -419,7 +424,7 @@ impl App {
     }
 
     /// Toggle proxy terminal visibility
-    pub fn toggle_proxy_visible(&mut self) {
+    pub fn _toggle_proxy_visible(&mut self) {
         if let Some(ref mut terminal) = self.proxy_terminal {
             terminal.visible = !terminal.visible;
         }
@@ -495,6 +500,52 @@ impl App {
             self.update_proxy_buffer();
 
             terminal.draw(|frame| crate::ui::render(self, frame))?;
+
+            // Check if auto-advance timer has elapsed
+            if let Some(timer) = self.auto_advance_timer {
+                if timer.elapsed() > Duration::from_millis(600) {
+                    self.auto_advance_timer = None;
+                    // Auto-advance through pages
+                    match self.page {
+                        Page::Browser => {
+                            self.selected_dir = Some(self.current_dir.clone());
+                            self.advance_page();
+                            self.auto_advance_timer = Some(Instant::now());
+                        }
+                        Page::ToolSelection => {
+                            if self.default_mode {
+                                // In default mode, pre-select Claude Code
+                                self.selected_tool_index = self.tools.iter().position(|t| t == "Claude Code").unwrap_or(0);
+                                if self.selected_tool_index < self.tools.len() {
+                                    let tool_name = self.tools[self.selected_tool_index].clone();
+                                    self.selected_tool = Some(tool_name.clone());
+                                    self.add_to_recents_tools(&tool_name);
+                                }
+                            }
+                            self.advance_page();
+                            self.auto_advance_timer = Some(Instant::now());
+                        }
+                        Page::Provider => {
+                            if self.default_mode {
+                                // In default mode, pre-select GitHub Copilot
+                                self.selected_provider_index = self.providers.iter().position(|p| p == "GitHub Copilot").unwrap_or(0);
+                                if self.selected_provider_index < self.providers.len() {
+                                    let provider_name = self.providers[self.selected_provider_index].clone();
+                                    self.selected_provider = Some(provider_name.clone());
+                                    self.add_to_recents_providers(&provider_name);
+                                }
+                            }
+                            self.advance_page();
+                            self.start_model_loading();
+                            self.auto_advance_timer = None; // Stop at Model page
+                        }
+                        Page::Model => {
+                            // Stop auto-advance at Model page
+                            self.auto_advance_timer = None;
+                        }
+                    }
+                }
+            }
 
             // Check if copilot login is pending
             if self.pending_copilot_login {
@@ -572,8 +623,18 @@ impl App {
                             // Typing mode: only Esc, Enter, Backspace have special meaning
                             match code {
                                 KeyCode::Esc => {
-                                    // Exit typing mode, enter navigation mode
+                                    // Exit typing mode, enter navigation mode and move to first match
                                     self.search_typing_mode = false;
+                                    if let SearchMode::Active { query, filtered_indices, .. } = &mut self.search_mode {
+                                        if !filtered_indices.is_empty() {
+                                            self.search_mode = SearchMode::Active {
+                                                query: query.clone(),
+                                                filtered_indices: filtered_indices.clone(),
+                                                current_match_index: 0,
+                                            };
+                                            self.update_selection_from_search();
+                                        }
+                                    }
                                     continue;
                                 }
                                 KeyCode::Enter => {
@@ -590,6 +651,41 @@ impl App {
                                     self.search_backspace();
                                     continue;
                                 }
+                                KeyCode::Up => {
+                                    // Exit typing mode and move to previous match
+                                    self.search_typing_mode = false;
+
+                                    // If search is active, ensure current match index is initialized
+                                    if let SearchMode::Active { query, filtered_indices, .. } = &mut self.search_mode {
+                                        if !filtered_indices.is_empty() {
+                                            self.search_mode = SearchMode::Active {
+                                                query: query.clone(),
+                                                filtered_indices: filtered_indices.clone(),
+                                                current_match_index: 0,
+                                            };
+                                        }
+                                    }
+
+                                    self.search_prev_match();
+                                    continue;
+                                }
+                                KeyCode::Down => {
+                                    // Exit typing mode and move to next match
+                                    self.search_typing_mode = false;
+
+                                    if let SearchMode::Active { query, filtered_indices, .. } = &mut self.search_mode {
+                                        if !filtered_indices.is_empty() {
+                                            self.search_mode = SearchMode::Active {
+                                                query: query.clone(),
+                                                filtered_indices: filtered_indices.clone(),
+                                                current_match_index: 0,
+                                            };
+                                        }
+                                    }
+
+                                    self.search_next_match();
+                                    continue;
+                                }
                                 KeyCode::Char(c) => {
                                     // All characters go into search query (including w/s/a/d)
                                     self.update_search_query(c);
@@ -600,13 +696,13 @@ impl App {
                                 }
                             }
                         } else {
-                            // Navigation mode: w/s/a/d navigate filtered results
+                            // Navigation mode: w/s/a/d and Up/Down navigate filtered results
                             match code {
-                                KeyCode::Char('w') | KeyCode::Char('W') => {
+                                KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Up => {
                                     self.search_prev_match();
                                     continue;
                                 }
-                                KeyCode::Char('s') | KeyCode::Char('S') => {
+                                KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
                                     self.search_next_match();
                                     continue;
                                 }
@@ -794,16 +890,6 @@ impl App {
                                 self.stop_proxy();
                             } else {
                                 self.start_proxy();
-                            }
-                        }
-                        // Global hotkey: c - Toggle Copilot proxy visibility or interactive login
-                        KeyCode::Char('c') => {
-                            if self.proxy_terminal.is_some() {
-                                self.toggle_proxy_visible();
-                            } else if self.copilot_proxy_active {
-                                self.stop_copilot_proxy();
-                            } else {
-                                self.start_copilot_proxy(terminal);
                             }
                         }
                         KeyCode::Tab => {
@@ -1706,43 +1792,50 @@ impl App {
         match self.page {
             Page::Browser => {
                 self.selected_dir = Some(self.current_dir.clone());
-                if self.default_mode {
-                    // In default mode, skip directly to Model page
-                    self.page = Page::Model;
-                    self.start_model_loading();
-                } else {
-                    self.advance_page();
-                }
+                self.advance_page();
             }
             Page::ToolSelection => {
-                if self.selected_tool_index < self.tools.len() {
-                    let tool_name = self.tools[self.selected_tool_index].clone();
-                    if let Some(tool_info) = find_tool_by_display_name(&tool_name) {
-                        if !tools::check_tool_installed(tool_info) {
-                            self.dialog = Dialog::ToolNotInstalled {
-                                tool_name: tool_name.clone(),
-                            };
-                            return;
-                        }
-                        self.add_to_recents_tools(&tool_name);
-                        self.selected_tool = Some(tool_name.clone());
-                        if tool_info.needs_provider_selection {
-                            self.advance_page();
-                        } else {
-                            // Force a redraw so the Opening overlay is visible
-                            terminal.draw(|frame| crate::ui::render(self, frame)).ok();
-                            self.launch_selected_tool(terminal);
+                if self.default_mode {
+                    // In default mode, auto-select Claude Code and advance
+                    self.selected_tool_index = self.tools.iter().position(|t| t == "Claude Code").unwrap_or(0);
+                    self.advance_page();
+                } else {
+                    if self.selected_tool_index < self.tools.len() {
+                        let tool_name = self.tools[self.selected_tool_index].clone();
+                        if let Some(tool_info) = find_tool_by_display_name(&tool_name) {
+                            if !tools::check_tool_installed(tool_info) {
+                                self.dialog = Dialog::ToolNotInstalled {
+                                    tool_name: tool_name.clone(),
+                                };
+                                return;
+                            }
+                            self.add_to_recents_tools(&tool_name);
+                            self.selected_tool = Some(tool_name.clone());
+                            if tool_info.needs_provider_selection {
+                                self.advance_page();
+                            } else {
+                                // Force a redraw so the Opening overlay is visible
+                                terminal.draw(|frame| crate::ui::render(self, frame)).ok();
+                                self.launch_selected_tool(terminal);
+                            }
                         }
                     }
                 }
             }
             Page::Provider => {
-                if self.selected_provider_index < self.providers.len() {
-                    let provider = self.providers[self.selected_provider_index].clone();
-                    self.add_to_recents_providers(&provider);
-                    self.selected_provider = Some(provider);
+                if self.default_mode {
+                    // In default mode, auto-select GitHub Copilot and advance
+                    self.selected_provider_index = self.providers.iter().position(|p| p == "GitHub Copilot").unwrap_or(0);
                     self.advance_page();
                     self.start_model_loading();
+                } else {
+                    if self.selected_provider_index < self.providers.len() {
+                        let provider = self.providers[self.selected_provider_index].clone();
+                        self.add_to_recents_providers(&provider);
+                        self.selected_provider = Some(provider);
+                        self.advance_page();
+                        self.start_model_loading();
+                    }
                 }
             }
             Page::Model => {
@@ -1805,6 +1898,15 @@ impl App {
 
         self.models_loading = false;
         self.selected_model_index = 0;
+
+        // Auto-start proxy in default mode with GitHub Copilot
+        if self.proxy_auto_start && self.selected_provider.as_deref() == Some("GitHub Copilot") {
+            if let Some(pid) = tools::start_copilot_proxy() {
+                self.copilot_proxy_pid = Some(pid);
+                self.copilot_proxy_active = true;
+            }
+            self.proxy_auto_start = false;  // Only auto-start once
+        }
     }
 
     pub fn launch_selected_tool(&mut self, terminal: &mut ratatui::DefaultTerminal) -> bool {
@@ -1917,13 +2019,13 @@ impl App {
         }
     }
 
-    fn start_copilot_proxy(&mut self, terminal: &mut ratatui::DefaultTerminal) {
+    fn _start_copilot_proxy(&mut self, terminal: &mut ratatui::DefaultTerminal) {
         self.launch_copilot_login(terminal);
         self.copilot_proxy_active = tools::check_copilot_proxy_running();
         self.copilot_proxy_last_check = Instant::now();
     }
 
-    fn stop_copilot_proxy(&mut self) {
+    fn _stop_copilot_proxy(&mut self) {
         use std::process::{Command, Stdio};
 
         #[cfg(unix)]
@@ -2238,10 +2340,11 @@ impl App {
             }
             3 => {
                 // settings
-                self.dialog = Dialog::SettingsConfig { selected_index: 0 };
+                self.settings_open = true;
+                self.settings_selection = 0;
             }
             4 => {
-                // globalprofileconf
+                // globalconf
                 self.global_config_open = true;
                 self.global_config_selection = 0;
             }

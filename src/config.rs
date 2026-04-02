@@ -88,7 +88,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load configuration from ~/.config/clumsycat/config.json
+    /// Load configuration from ~/.config/claudecat/config.json
     /// Returns default config if file doesn't exist or is corrupted
     pub fn load() -> Self {
         let config_path = Self::config_path();
@@ -114,7 +114,7 @@ impl Config {
         Self::default()
     }
 
-    /// Save configuration to ~/.config/clumsycat/config.json
+    /// Save configuration to ~/.config/claudecat/config.json
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(config_path) = Self::config_path() {
             // Create parent directories if they don't exist
@@ -131,7 +131,7 @@ impl Config {
 
     /// Get the path to the config file
     fn config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|dir| dir.join("clumsycat").join("config.json"))
+        dirs::config_dir().map(|dir| dir.join("claudecat").join("config.json"))
     }
 }
 

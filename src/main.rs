@@ -15,7 +15,7 @@ use std::io::{stdout, Write};
 
 #[derive(Parser)]
 #[command(
-    name = "cc",
+    name = "claudecat",
     about = "terminal ui launcher for ai coding tools",
     disable_version_flag = true
 )]
@@ -23,8 +23,8 @@ struct Cli {
     #[arg(short = 'V', long)]
     version: bool,
 
-    #[arg(long)]
-    default: bool,
+    #[arg(short = 'd')]
+    d: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut terminal = ratatui::init();
 
-    let mut app = App::new(true);
+    let mut app = App::new(cli.d);
     let result = app.run(&mut terminal);
 
     // Clean up app resources (proxy, etc.) before terminal cleanup
@@ -65,8 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("\x1B[2J\x1B[1;1H"); // Clear screen and move cursor to top-left
 
     // Show ASCII art
-    let ascii_art =
-        std::fs::read_to_string("ascii.md").unwrap_or_else(|_| "CLUMSY CAT".to_string());
+    let ascii_art = include_str!("../ascii.md");
     println!("{}", ascii_art);
 
     // Show version number under ASCII art
