@@ -286,7 +286,7 @@ impl App {
             ascii_art,
             default_mode,
             proxy_auto_start: default_mode,  // auto-start proxy in default mode
-            auto_advance_timer: Some(Instant::now()),  // Always auto-advance from Browser page
+            auto_advance_timer: if default_mode { Some(Instant::now()) } else { None },  // Auto-advance only in default mode
 
             // Page 1: Browser state
             current_dir,
@@ -571,7 +571,11 @@ impl App {
                     }
 
                     // Map vim keys if nav_mode is "vim"
-                    let code = self.map_vim_key(key.code);
+                    let mut code = self.map_vim_key(key.code);
+
+                    // Logging: capture raw key and mapped code for debugging navigation issues
+                    #[cfg(debug_assertions)]
+                    eprintln!("key press: raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
 
                     // Handle dialog input first (highest priority)
                     if self.dialog != Dialog::None {
@@ -613,6 +617,8 @@ impl App {
 
                     // Handle search mode input
                     if self.search_mode.is_active() {
+                        #[cfg(debug_assertions)]
+                        eprintln!("search_mode active: typing_mode={} current_match={:?}", self.search_typing_mode, self.search_mode.current_match());
                         // Allow control key combinations to pass through
                         let is_ctrl_shortcut = key.modifiers.contains(KeyModifiers::CONTROL);
 
