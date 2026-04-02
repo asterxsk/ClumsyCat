@@ -357,6 +357,7 @@ impl App {
 
     /// Advance to the next page based on current page and selections
     pub fn advance_page(&mut self) {
+        let old = self.page;
         match self.page {
             Page::Browser => {
                 self.page = Page::ToolSelection;
@@ -372,6 +373,8 @@ impl App {
                 // Final page - launch the selected tool
             }
         }
+        #[cfg(debug_assertions)]
+        eprintln!("advance_page: {:?} -> {:?}", old, self.page);
     }
 
     /// Go back to the previous page
@@ -962,21 +965,29 @@ impl App {
                         KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Up => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
+                            #[cfg(debug_assertions)]
+                            eprintln!("nav: up key on page={:?} active_panel={:?}", self.page, self.active_panel);
                             self.handle_up();
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Down => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
+                            #[cfg(debug_assertions)]
+                            eprintln!("nav: down key on page={:?} active_panel={:?}", self.page, self.active_panel);
                             self.handle_down();
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Right => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
+                            #[cfg(debug_assertions)]
+                            eprintln!("nav: open/right key on page={:?} active_panel={:?}", self.page, self.active_panel);
                             self.handle_open(terminal);
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Left => {
                             self.quit_confirm = 0;
                             self.quit_timer = None;
+                            #[cfg(debug_assertions)]
+                            eprintln!("nav: back/left key on page={:?} active_panel={:?}", self.page, self.active_panel);
                             self.handle_back();
                         }
                         KeyCode::Char('/') => {
