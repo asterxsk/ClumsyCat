@@ -14,17 +14,21 @@ Insert gif or link to demo
 
 -->
 
-## Demo
+<!-- ## Demo
 
 Insert a short animated GIF or link demonstrating directory navigation and launching a tool.
 
+-->
+
 ## License
 
-Distributed under the MIT License. See [LICENSE](./LICENSE) for details.
+Distributed under the Apache License 2.0. See [LICENSE](./LICENSE) for details.
 
-## Documentation
+<!-- ## Documentation
 
 Project docs and extended usage will be added here. (Currently commented out above.)
+
+-->
 
 ## Installation
 
