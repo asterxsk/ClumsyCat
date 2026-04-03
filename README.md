@@ -1,6 +1,6 @@
 # ClaudeCat (ClumsyCat)
 
-[![github release (latest by date)](https://img.shields.io/github/v/release/asterxsk/ClumsyCat?style=for-the-badge)](https://github.com/asterxsk/ClumsyCat/releases)  [![license: apache-2.0](https://img.shields.io/github/license/asterxsk/ClumsyCat?style=for-the-badge)](https://github.com/asterxsk/ClumsyCat/blob/master/LICENSE)
+[![github release (latest by date)](https://img.shields.io/github/v/release/asterxsk/ClumsyCat?style=for-the-badge)](https://github.com/asterxsk/ClumsyCat/releases)  [![license: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](https://github.com/asterxsk/ClumsyCat/blob/master/LICENSE)
 
 A terminal UI launcher for AI coding tools — navigate projects and launch AI assistants with a modern, keyboard-first interface.
 
