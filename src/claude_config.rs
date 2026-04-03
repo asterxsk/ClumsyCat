@@ -135,7 +135,18 @@ impl ClaudeSettings {
             self.raw["env"] = default_env;
         }
 
-        let env_obj = self.raw["env"].as_object_mut().unwrap();
+        let env_obj = if let Some(v) = self.raw.get_mut("env") {
+                if let Some(obj) = v.as_object_mut() {
+                    obj
+                } else {
+                    // replace malformed env with object
+                    self.raw["env"] = serde_json::json!({});
+                    self.raw["env"].as_object_mut().expect("env object just created")
+                }
+            } else {
+                self.raw["env"] = serde_json::json!({});
+                self.raw["env"].as_object_mut().expect("env object just created")
+            };
 
         for (key, value) in env_vars {
             env_obj.insert(key, Value::String(value));

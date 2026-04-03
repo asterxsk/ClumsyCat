@@ -124,8 +124,19 @@ fn render_left_column(frame: &mut Frame, area: Rect, app: &mut App, theme: &Them
     let max_allowed = area.height.saturating_sub(6); // leave space for navigation and bottom bar
     let ascii_height = if ascii_lines + 2 > max_allowed {
         // Try loading small cat-only ASCII
-        let small =
-            std::fs::read_to_string("ascii_cat.md").unwrap_or_else(|_| app.ascii_art.clone());
+        let small = {
+            if let Some(mut d) = dirs::data_dir() {
+                d.push("clumsycat");
+                let p = d.join("ascii_cat.md");
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    s
+                } else {
+                    app.ascii_art.clone()
+                }
+            } else {
+                app.ascii_art.clone()
+            }
+        };
         let small_lines = small.lines().count() as u16;
         if small_lines + 2 > max_allowed {
             // Still too big, clamp to max_allowed
@@ -176,15 +187,39 @@ fn render_ascii_box(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme)
     frame.render_widget(block, area);
 
     // Try to load the small cat ASCII art first, then fallback to full art, then fallback to text
-    let ascii_to_render = std::fs::read_to_string("ascii_cat.md")
-        .or_else(|_| std::fs::read_to_string("ascii.md"))
-        .unwrap_or_else(|_| {
-            if app.ascii_art.trim().is_empty() {
-                "   CLUMSY\n     CAT".to_string()
+    let ascii_to_render = {
+        // try data_dir copies first, then cwd files, then embedded/app string
+        if let Some(mut d) = dirs::data_dir() {
+            d.push("clumsycat");
+            let a = d.join("ascii_cat.md");
+            let b = d.join("ascii.md");
+            if let Ok(s) = std::fs::read_to_string(&a) {
+                s
+            } else if let Ok(s) = std::fs::read_to_string(&b) {
+                s
+            } else if let Ok(s) = std::fs::read_to_string("ascii_cat.md") {
+                s
+            } else if let Ok(s) = std::fs::read_to_string("ascii.md") {
+                s
             } else {
-                app.ascii_art.clone()
+                if app.ascii_art.trim().is_empty() {
+                    include_str!("../ascii.md").to_string()
+                } else {
+                    app.ascii_art.clone()
+                }
             }
-        });
+        } else {
+            std::fs::read_to_string("ascii_cat.md")
+                .or_else(|_| std::fs::read_to_string("ascii.md"))
+                .unwrap_or_else(|_| {
+                    if app.ascii_art.trim().is_empty() {
+                        include_str!("../ascii.md").to_string()
+                    } else {
+                        app.ascii_art.clone()
+                    }
+                })
+        }
+    };
 
     if let Some(ref mut terminal) = app.proxy_terminal {
         if terminal.visible {

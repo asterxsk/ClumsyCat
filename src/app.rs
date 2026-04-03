@@ -4,6 +4,7 @@ use crate::fs::load_dir_entries;
 use crate::search::{filter_entries, SearchMode};
 use crate::terminal::ProxyTerminal;
 use crate::tools::{self, find_tool_by_display_name, LaunchResult, PROVIDERS, STUB_MODELS, TOOLS};
+use crate::proxy::{start_copilot_proxy, stop_copilot_proxy, spawn_proxy_terminal};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -194,8 +195,20 @@ impl App {
         let config = Config::load();
 
         // Load ASCII art from file
-        let ascii_art =
-            std::fs::read_to_string("ascii.md").unwrap_or_else(|_| "CLUMSY CAT".to_string());
+        let ascii_art = {
+            // prefer data_dir/clumsycat/ascii.md when available, else fall back to embedded copy
+            if let Some(mut d) = dirs::data_dir() {
+                d.push("clumsycat");
+                let p = d.join("ascii.md");
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    s
+                } else {
+                    include_str!("../ascii.md").to_string()
+                }
+            } else {
+                include_str!("../ascii.md").to_string()
+            }
+        };
 
         let current_dir = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
@@ -583,7 +596,14 @@ impl App {
                     {
                         eprintln!("key press: raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
                         // Also append to a persistent log for later inspection
-                        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("key_actions.log") {
+                        if let Some(mut d) = dirs::data_dir() {
+                            d.push("clumsycat");
+                            let _ = std::fs::create_dir_all(&d);
+                            let p = d.join("key_actions.log");
+                            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+                                let _ = writeln!(f, "raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
+                            }
+                        } else if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("key_actions.log") {
                             let _ = writeln!(f, "raw={:?} mapped={:?} modifiers={:?} page={:?} dialog={:?} settings_open={}", key.code, code, key.modifiers, self.page, self.dialog, self.settings_open);
                         }
                     }
@@ -2013,7 +2033,16 @@ impl App {
     fn launch_copilot_login(&mut self, terminal: &mut ratatui::DefaultTerminal) {
         use std::process::{Command, Stdio};
 
-        tools::prepare_for_launch("copilot-api");
+        // ensure copilot-api binary exists before attempting interactive login
+if let Some(_) = tools::get_tool_binary(&crate::tools::ToolInfo { binary_names: &["copilot-api"], display_name: "copilot-api", needs_provider_selection: false }) {
+    tools::prepare_for_launch("copilot-api");
+} else if tools::is_binary_in_path("copilot-api") {
+    // fallback direct PATH check
+    tools::prepare_for_launch("copilot-api");
+} else {
+    self.dialog = Dialog::Error { message: "copilot-api not found in PATH".to_string() };
+    return;
+}
 
         let result = Command::new("copilot-api")
             .args(["start", "--proxy-env"])

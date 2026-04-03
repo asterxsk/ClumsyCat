@@ -6,6 +6,7 @@ mod search;
 mod terminal;
 mod theme;
 mod tools;
+mod proxy;
 mod ui;
 
 use app::App;
@@ -65,7 +66,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("\x1B[2J\x1B[1;1H"); // Clear screen and move cursor to top-left
 
     // Show ASCII art
-    let ascii_art = include_str!("../ascii.md");
+    let ascii_art = {
+        if let Some(mut d) = dirs::data_dir() {
+            d.push("clumsycat");
+            let p = d.join("ascii.md");
+            if let Ok(s) = std::fs::read_to_string(&p) {
+                s
+            } else {
+                include_str!("../ascii.md").to_string()
+            }
+        } else {
+            include_str!("../ascii.md").to_string()
+        }
+    };
     println!("{}", ascii_art);
 
     // Show version number under ASCII art
